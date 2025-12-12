@@ -24,14 +24,79 @@ except ImportError:
     sys.exit(1)
 
 # ============================================================================
-# 전역 변수 - LLM 응답 저장소
+# 전역 변수 - 저장소
 # ============================================================================
 
-LLM_RESPONSE_STORAGE: Dict[str, Any] = {}
+LLM_RESPONSE_STORAGE: Dict[str, Any] = {}      # ask_llm 결과 저장소
+TOOL_RESULT_STORAGE: Dict[str, Any] = {}       # Tool 실행 결과 저장소
 
 # LLM 클라이언트 참조 (ask_llm에서 사용)
 _OLLAMA_CLIENT: Optional['OllamaClient'] = None
 _CURRENT_MODEL: Optional[str] = None
+
+# ============================================================================
+# Tool 결과 저장소 관리 함수
+# ============================================================================
+
+def store_tool_result(key: str, data: Any) -> None:
+    """Tool 실행 결과를 저장"""
+    global TOOL_RESULT_STORAGE
+    TOOL_RESULT_STORAGE[key] = data
+
+def get_tool_result(key: str) -> Any:
+    """저장된 Tool 결과 가져오기"""
+    return TOOL_RESULT_STORAGE.get(key)
+
+def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    인자에서 $key 참조를 실제 값으로 치환
+
+    예: {"context": "$file_content"} -> {"context": "실제 파일 내용..."}
+
+    지원하는 참조 형식:
+    - $key: TOOL_RESULT_STORAGE[key] 전체 값
+    - $key.field: TOOL_RESULT_STORAGE[key]["field"] 특정 필드
+    """
+    resolved = {}
+
+    for param_name, param_value in arguments.items():
+        if isinstance(param_value, str) and param_value.startswith("$"):
+            # $key 또는 $key.field 형식 파싱
+            ref = param_value[1:]  # $ 제거
+
+            if "." in ref:
+                # $key.field 형식
+                key, field = ref.split(".", 1)
+                stored_data = TOOL_RESULT_STORAGE.get(key)
+
+                if stored_data is None:
+                    raise ValueError(f"Reference '{param_value}' not found. Available keys: {list(TOOL_RESULT_STORAGE.keys())}")
+
+                if isinstance(stored_data, dict) and field in stored_data:
+                    resolved[param_name] = stored_data[field]
+                else:
+                    raise ValueError(f"Field '{field}' not found in '{key}'. Available fields: {list(stored_data.keys()) if isinstance(stored_data, dict) else 'N/A'}")
+            else:
+                # $key 형식
+                key = ref
+                stored_data = TOOL_RESULT_STORAGE.get(key)
+
+                if stored_data is None:
+                    raise ValueError(f"Reference '{param_value}' not found. Available keys: {list(TOOL_RESULT_STORAGE.keys())}")
+
+                resolved[param_name] = stored_data
+        else:
+            resolved[param_name] = param_value
+
+    return resolved
+
+def list_stored_keys() -> Dict[str, List[str]]:
+    """저장된 모든 키 목록 반환"""
+    result = {
+        "tool_results": list(TOOL_RESULT_STORAGE.keys()),
+        "llm_responses": list(LLM_RESPONSE_STORAGE.keys())
+    }
+    return result
 
 # ============================================================================
 # 도구 정의
@@ -76,7 +141,7 @@ def get_file(base_dir: str = ".", pattern: str = "*") -> Dict[str, Any]:
                 for f in base_path.rglob(pattern)
                 if f.is_file()
             ]
-
+        
         result = {
             "base_dir": str(base_path),
             "files": sorted(all_files),
@@ -108,7 +173,7 @@ def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
                 "result": "failure",
                 "error": f"File '{file_path}' does not exist"
             }
-
+        
         with open(file_path, 'r', encoding=encoding) as f:
             content = f.read()
 
@@ -123,7 +188,7 @@ def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
         }
 
         return result
-        
+
     except UnicodeDecodeError:
         # 바이너리 파일 처리
         try:
@@ -159,7 +224,7 @@ def write_file(file_path: str, content: object) -> Dict[str, Any]:
     try:
         # 디렉토리 경로 추출
         dir_path = os.path.dirname(file_path)
-        
+
         # 디렉토리가 있고 비어있지 않으면 생성
         if dir_path and not os.path.exists(dir_path):
             os.makedirs(dir_path, exist_ok=True)
@@ -327,6 +392,44 @@ def get_llm_response(key: str, is_remove: bool = False) -> Dict[str, Any]:
             "error": str(e)
         }
 
+def list_storage() -> Dict[str, Any]:
+    """
+    모든 저장소의 키 목록과 간단한 정보를 반환하는 함수.
+    """
+    tool_info = {}
+    for key, value in TOOL_RESULT_STORAGE.items():
+        if isinstance(value, dict):
+            tool_info[key] = {
+                "type": "dict",
+                "fields": list(value.keys())
+            }
+        elif isinstance(value, str):
+            tool_info[key] = {
+                "type": "string",
+                "length": len(value),
+                "preview": value[:100] + "..." if len(value) > 100 else value
+            }
+        else:
+            tool_info[key] = {
+                "type": type(value).__name__
+            }
+
+    llm_info = {}
+    for key, value in LLM_RESPONSE_STORAGE.items():
+        if isinstance(value, dict):
+            llm_info[key] = {
+                "fields": list(value.keys()),
+                "response_preview": value.get("response", "")[:100] + "..." if len(value.get("response", "")) > 100 else value.get("response", "")
+            }
+
+    return {
+        "result": "success",
+        "tool_results": tool_info,
+        "llm_responses": llm_info,
+        "tool_result_count": len(TOOL_RESULT_STORAGE),
+        "llm_response_count": len(LLM_RESPONSE_STORAGE)
+    }
+
 TOOLS = {
     "get_current_time": {
         "function": get_current_time,
@@ -433,6 +536,11 @@ TOOLS = {
                 "description": "If true, delete the entry after retrieving (default: false)"
             }
         }
+    },
+    "list_storage": {
+        "function": list_storage,
+        "description": "List all stored keys in tool_results and llm_responses storage. Use to see available $key references.",
+        "parameters": {}
     }
 }
 
@@ -447,7 +555,7 @@ class OllamaClient:
                    callback=None) -> str:
         """
         ⭐ Streaming chat - 실시간으로 토큰 생성
-
+        
         Args:
             callback: 각 토큰마다 호출될 함수 callback(token)
         """
@@ -547,29 +655,49 @@ Available tools:
 When you need a tool, respond EXACTLY in this format:
 TOOL_CALL: tool_name
 ARGUMENTS: {{"param_name": "value"}}
+STORE_AS: key_name
 
 Important guidelines:
 - Use correct JSON types: strings in "quotes", numbers without quotes, booleans as true/false
 - All required parameters must be provided
 - Optional parameters can be omitted (defaults will be used)
 - Follow the parameter descriptions carefully
-- Only use tools that are directly relevant to the user's request
-- If the request is not clear, ask the user to clarify before using tools
-- Do not make assumptions about file paths or parameters - ask if uncertain
-- When using tool outputs as inputs for other tools, preserve the exact values without modification
 
-Workflow for complex analysis tasks:
-1. Use read_file to get file content
-2. Use ask_llm to perform analysis (pass file content as context, specify a unique key)
-3. Use get_llm_response to retrieve the analysis result
-4. Use write_file to save the result if needed
+⭐ REFERENCE SYSTEM - CRITICAL:
+Every tool result is automatically stored with the key specified in STORE_AS.
+You can reference stored data using $key syntax in arguments:
+- $key: Get the entire stored result
+- $key.field: Get a specific field from the stored result
+
+Example workflow:
+1. Read a file:
+   TOOL_CALL: read_file
+   ARGUMENTS: {{"file_path": "hello.c"}}
+   STORE_AS: source_code
+
+2. Analyze with LLM (reference the file content):
+   TOOL_CALL: ask_llm
+   ARGUMENTS: {{"key": "analysis", "query": "Analyze this code", "context": "$source_code.content"}}
+   STORE_AS: llm_result
+
+3. Save the analysis:
+   TOOL_CALL: write_file
+   ARGUMENTS: {{"file_path": "report.md", "content": "$analysis.response"}}
+   STORE_AS: save_result
+
+Common field references:
+- $key.content: File content from read_file
+- $key.files: File list from get_file  
+- $key.response: LLM response from ask_llm (via get_llm_response)
+- $key.result: Success/failure status
+
+Use list_storage tool to see all available keys and their fields.
+Do NOT generate large content in arguments - always use $key references!
 
 Language guideline:
 - ALWAYS respond in the same language the user is using
 - If user writes in Korean (한글), respond in Korean
 - If user writes in English, respond in English
-- If user writes in Japanese, respond in Japanese
-- Maintain consistent language throughout the conversation unless user switches languages
 
 Be concise and helpful."""
 
@@ -587,16 +715,70 @@ Be concise and helpful."""
                 arguments = json.loads(args_match.group(1))
             except:
                 pass
-        return {"tool": tool_name, "arguments": arguments}
+
+        # STORE_AS 키 추출
+        store_match = re.search(r'STORE_AS:\s*(\w+)', response, re.IGNORECASE)
+        store_as = store_match.group(1) if store_match else None
+
+        return {"tool": tool_name, "arguments": arguments, "store_as": store_as}
 
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
         if tool_name not in TOOLS:
             return {"error": f"Unknown tool: {tool_name}"}
 
         try:
-            return TOOLS[tool_name]["function"](**arguments)
+            # $key 참조 해결
+            resolved_args = resolve_references(arguments)
+            return TOOLS[tool_name]["function"](**resolved_args)
+        except ValueError as e:
+            # 참조 해결 실패
+            return {"error": f"Reference error: {str(e)}"}
         except Exception as e:
             return {"error": str(e)}
+
+    def _summarize_tool_result(self, result: Any, store_as: Optional[str]) -> str:
+        """Tool 결과를 간결하게 요약"""
+        if isinstance(result, dict):
+            summary_parts = []
+
+            # 결과 상태
+            if "result" in result:
+                summary_parts.append(f"status: {result['result']}")
+
+            # 에러가 있으면 표시
+            if "error" in result:
+                summary_parts.append(f"error: {result['error']}")
+                return "{" + ", ".join(summary_parts) + "}"
+
+            # 주요 필드 요약
+            for key, value in result.items():
+                if key in ["result", "error"]:
+                    continue
+
+                if isinstance(value, str):
+                    if len(value) > 100:
+                        summary_parts.append(f"{key}: <{len(value)} chars>")
+                    else:
+                        summary_parts.append(f"{key}: \"{value[:50]}...\"" if len(value) > 50 else f"{key}: \"{value}\"")
+                elif isinstance(value, list):
+                    summary_parts.append(f"{key}: [{len(value)} items]")
+                elif isinstance(value, dict):
+                    summary_parts.append(f"{key}: {{...}}")
+                else:
+                    summary_parts.append(f"{key}: {value}")
+
+            summary = "{" + ", ".join(summary_parts) + "}"
+
+            if store_as:
+                summary += f"\n→ Stored as ${store_as}"
+                # 사용 가능한 필드 힌트
+                fields = [k for k in result.keys() if k != "result"]
+                if fields:
+                    summary += f"\n→ Available: ${store_as}.{', ${store_as}.'.join(fields[:5])}"
+
+            return summary
+        else:
+            return str(result)[:200]
 
     def chat(self, user_message: str, stream_callback=None, 
              status_callback=None, confirm_callback=None, max_iterations: int = 5,
@@ -650,6 +832,7 @@ Be concise and helpful."""
                 # 도구 실행
                 tool_name = tool_call["tool"]
                 arguments = tool_call["arguments"]
+                store_as = tool_call["store_as"]
 
                 # ⭐ 사용자에게 확인 요청
                 if confirm_callback:
@@ -670,6 +853,12 @@ Be concise and helpful."""
 
                 tool_result = self._execute_tool(tool_name, arguments)
 
+                # ⭐ 결과를 저장소에 저장
+                if store_as:
+                    store_tool_result(store_as, tool_result)
+                    if status_callback:
+                        status_callback(f"💾 Stored as: ${store_as}")
+
                 if status_callback:
                     status_callback(f"📊 Tool completed")
 
@@ -679,12 +868,13 @@ Be concise and helpful."""
                     "content": llm_response
                 })
 
-                # ⭐ 도구 결과를 강조해서 전달
+                # ⭐ 간결한 결과 메시지 (전체 데이터 대신 요약만)
+                result_summary = self._summarize_tool_result(tool_result, store_as)
                 tool_result_message = f"""TOOL_RESULT:
-{json.dumps(tool_result, indent=2)}
+{result_summary}
 
-IMPORTANT: If you need to use any values from this result (like file paths, names, IDs), 
-copy them EXACTLY as shown above. Do not modify, translate, or alter them in any way."""
+Available keys: {list(TOOL_RESULT_STORAGE.keys())}
+Use $key or $key.field syntax to reference stored data in next tool calls."""
 
                 self.conversation_history.append({
                     "role": "user",
@@ -703,10 +893,11 @@ copy them EXACTLY as shown above. Do not modify, translate, or alter them in any
         return "Max iterations reached"
 
     def reset(self):
-        global LLM_RESPONSE_STORAGE
+        global LLM_RESPONSE_STORAGE, TOOL_RESULT_STORAGE
         self.conversation_history = []
         # 대화 초기화 시 저장소도 클리어
         LLM_RESPONSE_STORAGE = {}
+        TOOL_RESULT_STORAGE = {}
 
 
 # ============================================================================
