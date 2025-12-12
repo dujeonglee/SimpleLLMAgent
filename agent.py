@@ -27,7 +27,6 @@ except ImportError:
 # 전역 변수 - 저장소
 # ============================================================================
 
-LLM_RESPONSE_STORAGE: Dict[str, Any] = {}      # ask_llm 결과 저장소
 TOOL_RESULT_STORAGE: Dict[str, Any] = {}       # Tool 실행 결과 저장소
 
 # LLM 클라이언트 참조 (ask_llm에서 사용)
@@ -94,7 +93,6 @@ def list_stored_keys() -> Dict[str, List[str]]:
     """저장된 모든 키 목록 반환"""
     result = {
         "tool_results": list(TOOL_RESULT_STORAGE.keys()),
-        "llm_responses": list(LLM_RESPONSE_STORAGE.keys())
     }
     return result
 
@@ -106,6 +104,7 @@ def get_current_time() -> Dict[str, str]:
     """현재 시간"""
     now = datetime.now()
     return {
+        "result": "success",
         "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
         "current_week": now.strftime("%W"),
         "day_of_week": now.strftime("%A")
@@ -273,30 +272,23 @@ def delete_file(file_path: str) -> Dict[str, Any]:
             "error": str(e)
         }
 
-def ask_llm(key: str, query: str, context: str = "") -> Dict[str, Any]:
+def ask_llm(query: str, context: str = "") -> Dict[str, Any]:
     """
-    LLM에 쿼리를 보내고 결과를 전역 저장소에 저장하는 함수.
+    LLM에 쿼리를 보내고 결과를 반환하는 함수.
+    결과는 STORE_AS로 지정한 키에 저장되며, $key.response로 접근 가능.
 
     Args:
-        key: 결과를 저장할 키 이름
         query: LLM에 보낼 질문/요청
         context: 추가 컨텍스트 (예: 파일 내용, 이전 결과 등)
     """
-    global LLM_RESPONSE_STORAGE, _OLLAMA_CLIENT, _CURRENT_MODEL
+    global _OLLAMA_CLIENT, _CURRENT_MODEL
 
     try:
         if _OLLAMA_CLIENT is None or _CURRENT_MODEL is None:
             return {
-                "key": key,
                 "result": "failure",
                 "error": "LLM client not initialized. Please connect first."
             }
-
-        # 이미 같은 키가 있으면 경고
-        if key in LLM_RESPONSE_STORAGE:
-            existing_warning = f"Warning: Key '{key}' already exists and will be overwritten."
-        else:
-            existing_warning = None
 
         # 메시지 구성
         if context:
@@ -323,71 +315,15 @@ Please provide a detailed and helpful response."""
             callback=None  # 스트리밍 없이 전체 응답 받기
         )
 
-        # 결과 저장
-        LLM_RESPONSE_STORAGE[key] = {
-            "query": query,
-            "context_provided": bool(context),
+        return {
+            "result": "success",
             "response": response,
+            "response_length": len(response),
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-        result = {
-            "key": key,
-            "result": "success",
-            "response_length": len(response),
-            "response_preview": response[:500] + "..." if len(response) > 500 else response,
-            "stored_keys": list(LLM_RESPONSE_STORAGE.keys())
-        }
-
-        if existing_warning:
-            result["warning"] = existing_warning
-
-        return result
-
     except Exception as e:
         return {
-            "key": key,
-            "result": "failure",
-            "error": str(e)
-        }
-
-def get_llm_response(key: str, is_remove: bool = False) -> Dict[str, Any]:
-    """
-    저장된 LLM 응답을 가져오는 함수.
-
-    Args:
-        key: 가져올 응답의 키
-        is_remove: True면 가져온 후 해당 엔트리 삭제
-    """
-    global LLM_RESPONSE_STORAGE
-
-    try:
-        if key not in LLM_RESPONSE_STORAGE:
-            return {
-                "key": key,
-                "result": "failure",
-                "error": f"Key '{key}' not found in storage",
-                "available_keys": list(LLM_RESPONSE_STORAGE.keys())
-            }
-
-        data = LLM_RESPONSE_STORAGE[key]
-
-        result = {
-            "key": key,
-            "result": "success",
-            "data": data,
-            "removed": is_remove
-        }
-
-        if is_remove:
-            del LLM_RESPONSE_STORAGE[key]
-            result["remaining_keys"] = list(LLM_RESPONSE_STORAGE.keys())
-
-        return result
-
-    except Exception as e:
-        return {
-            "key": key,
             "result": "failure",
             "error": str(e)
         }
@@ -414,20 +350,10 @@ def list_storage() -> Dict[str, Any]:
                 "type": type(value).__name__
             }
 
-    llm_info = {}
-    for key, value in LLM_RESPONSE_STORAGE.items():
-        if isinstance(value, dict):
-            llm_info[key] = {
-                "fields": list(value.keys()),
-                "response_preview": value.get("response", "")[:100] + "..." if len(value.get("response", "")) > 100 else value.get("response", "")
-            }
-
     return {
         "result": "success",
         "tool_results": tool_info,
-        "llm_responses": llm_info,
         "tool_result_count": len(TOOL_RESULT_STORAGE),
-        "llm_response_count": len(LLM_RESPONSE_STORAGE)
     }
 
 TOOLS = {
@@ -500,13 +426,8 @@ TOOLS = {
     },
     "ask_llm": {
         "function": ask_llm,
-        "description": "Send a query to LLM and store the response with a key. Use this for complex analysis tasks that need separate LLM processing.",
+        "description": "Send a query to LLM for analysis. Result is stored via STORE_AS and accessible as $key.response",
         "parameters": {
-            "key": {
-                "type": "string",
-                "required": True,
-                "description": "Unique key to store the response (e.g., 'analysis_result', 'code_review')"
-            },
             "query": {
                 "type": "string",
                 "required": True,
@@ -516,30 +437,13 @@ TOOLS = {
                 "type": "string",
                 "required": False,
                 "default": "",
-                "description": "Additional context like file content, previous results, etc."
-            }
-        }
-    },
-    "get_llm_response": {
-        "function": get_llm_response,
-        "description": "Retrieve a stored LLM response by key. Use this to get results from previous ask_llm calls.",
-        "parameters": {
-            "key": {
-                "type": "string",
-                "required": True,
-                "description": "The key of the stored response to retrieve"
-            },
-            "is_remove": {
-                "type": "boolean",
-                "required": False,
-                "default": False,
-                "description": "If true, delete the entry after retrieving (default: false)"
+                "description": "Additional context like file content (use $key.content reference)"
             }
         }
     },
     "list_storage": {
         "function": list_storage,
-        "description": "List all stored keys in tool_results and llm_responses storage. Use to see available $key references.",
+        "description": "List all stored keys in tool_results storage. Use to see available $key references.",
         "parameters": {}
     }
 }
@@ -662,6 +566,9 @@ Important guidelines:
 - All required parameters must be provided
 - Optional parameters can be omitted (defaults will be used)
 - Follow the parameter descriptions carefully
+- Only use tools that are directly relevant to the user's request
+- If the request is not clear, ask the user to clarify before using tools
+- Do not make assumptions about file paths or parameters - ask if uncertain
 
 ⭐ REFERENCE SYSTEM - CRITICAL:
 Every tool result is automatically stored with the key specified in STORE_AS.
@@ -673,22 +580,22 @@ Example workflow:
 1. Read a file:
    TOOL_CALL: read_file
    ARGUMENTS: {{"file_path": "hello.c"}}
-   STORE_AS: source_code
+   STORE_AS: src
 
 2. Analyze with LLM (reference the file content):
    TOOL_CALL: ask_llm
-   ARGUMENTS: {{"key": "analysis", "query": "Analyze this code", "context": "$source_code.content"}}
-   STORE_AS: llm_result
+   ARGUMENTS: {{"query": "Analyze this C code and explain its structure", "context": "$src.content"}}
+   STORE_AS: analysis
 
-3. Save the analysis:
+3. Save the analysis result:
    TOOL_CALL: write_file
    ARGUMENTS: {{"file_path": "report.md", "content": "$analysis.response"}}
-   STORE_AS: save_result
+   STORE_AS: saved
 
 Common field references:
 - $key.content: File content from read_file
 - $key.files: File list from get_file  
-- $key.response: LLM response from ask_llm (via get_llm_response)
+- $key.response: LLM response from ask_llm
 - $key.result: Success/failure status
 
 Use list_storage tool to see all available keys and their fields.
@@ -870,11 +777,17 @@ Be concise and helpful."""
 
                 # ⭐ 간결한 결과 메시지 (전체 데이터 대신 요약만)
                 result_summary = self._summarize_tool_result(tool_result, store_as)
-                tool_result_message = f"""TOOL_RESULT:
+                # 성공 시에만 available keys 정보 추가
+
+                if isinstance(tool_result, dict) and tool_result.get("result") == "success":
+                    tool_result_message = f"""TOOL_RESULT:
 {result_summary}
 
 Available keys: {list(TOOL_RESULT_STORAGE.keys())}
 Use $key or $key.field syntax to reference stored data in next tool calls."""
+                else:
+                    tool_result_message = f"""TOOL_RESULT:
+{result_summary}"""
 
                 self.conversation_history.append({
                     "role": "user",
@@ -893,10 +806,9 @@ Use $key or $key.field syntax to reference stored data in next tool calls."""
         return "Max iterations reached"
 
     def reset(self):
-        global LLM_RESPONSE_STORAGE, TOOL_RESULT_STORAGE
+        global TOOL_RESULT_STORAGE
         self.conversation_history = []
         # 대화 초기화 시 저장소도 클리어
-        LLM_RESPONSE_STORAGE = {}
         TOOL_RESULT_STORAGE = {}
 
 
