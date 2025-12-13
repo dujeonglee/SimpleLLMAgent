@@ -54,10 +54,10 @@ def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
     지원하는 참조 형식:
     1. 값 전체가 참조인 경우:
        - {"context": "$source_code.content"} → {"context": "파일 내용..."}
-    
+
     2. 문자열 내부에 참조가 포함된 경우:
        - {"query": "분석해줘: $source_code.content"} → {"query": "분석해줘: 파일 내용..."}
-    
+
     참조 문법:
     - $key: 전체 값
     - $key.field: 특정 필드
@@ -77,29 +77,29 @@ def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
 def _resolve_string_references(text: str) -> Any:
     """
     문자열 내의 모든 $key.field 참조를 치환
-    
+
     - 문자열 전체가 단일 참조면 해당 타입 그대로 반환 (dict, list 등)
     - 문자열 내에 참조가 포함되어 있으면 문자열로 치환
     """
     import re
-    
+
     pattern = r'\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[\d+\])*)'
     matches = list(re.finditer(pattern, text))
 
     if not matches:
         return text
-    
+
     if len(matches) == 1:
         match = matches[0]
         if text.strip() == match.group(0):
             ref = match.group(1)
             return _resolve_single_reference(ref, match.group(0))
-    
+
     result = text
     for match in reversed(matches):
         ref = match.group(1)
         full_match = match.group(0)
-        
+
         try:
             resolved_value = _resolve_single_reference(ref, full_match)
             if isinstance(resolved_value, str):
@@ -108,37 +108,37 @@ def _resolve_string_references(text: str) -> Any:
                 replacement = json.dumps(resolved_value, ensure_ascii=False)
             else:
                 replacement = str(resolved_value)
-            
+
             result = result[:match.start()] + replacement + result[match.end():]
         except ValueError:
             raise
-    
+
     return result
 
 def _resolve_single_reference(ref: str, original: str) -> Any:
     """단일 참조를 해석"""
     import re
-    
+
     if "." in ref:
         key, rest = ref.split(".", 1)
     else:
         key = ref
         rest = None
-    
+
     data = TOOL_RESULT_STORAGE.get(key)
     if data is None:
         raise ValueError(f"Reference '{original}' not found. Available keys: {list(TOOL_RESULT_STORAGE.keys())}")
-    
+
     if rest is None:
         return data
-    
+
     tokens = re.findall(r'(\w+)|\[(\d+)\]', rest)
     current = data
     path_so_far = f"${key}"
-    
+
     for token in tokens:
         field_name, index = token
-        
+
         if field_name:
             path_so_far += f".{field_name}"
             if not isinstance(current, dict):
@@ -155,7 +155,7 @@ def _resolve_single_reference(ref: str, original: str) -> Any:
             if idx < 0 or idx >= len(current):
                 raise ValueError(f"Index [{idx}] out of range at '{path_so_far}'. List has {len(current)} items (0-{len(current)-1})")
             current = current[idx]
-    
+
     return current
 
 
@@ -167,12 +167,11 @@ def make_return_object(data: Dict[str, Any]) -> Dict[str, Any]:
     }
     return {**base, **data}
 
-
 def get_storage_summary() -> str:
     """현재 저장소 상태 요약"""
     if not TOOL_RESULT_STORAGE:
         return "저장된 데이터가 없습니다."
-    
+
     summary = []
     for key, value in TOOL_RESULT_STORAGE.items():
         if isinstance(value, dict):
@@ -181,7 +180,6 @@ def get_storage_summary() -> str:
         else:
             summary.append(f"${key}: {type(value).__name__}")
     return ", ".join(summary)
-
 
 # ============================================================================
 # 도구 정의
@@ -403,13 +401,13 @@ class OllamaClient:
         headers = {'Content-Type': 'application/json'}
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(f"{self.base_url}{endpoint}", data=data, headers=headers)
-        
+
         with urllib.request.urlopen(req, timeout=timeout) as response:
             if response.getcode() != 200:
                 raise Exception(f"Ollama API error: {response.getcode()}")
             return json.loads(response.read().decode('utf-8'))
 
-    def chat_simple(self, model: str, messages: List[Dict], 
+    def chat_simple(self, model: str, messages: List[Dict],
                     temperature: float = 0.7, max_tokens: int = 4000) -> str:
         """단순 채팅 (스트리밍 없음, JSON 모드 없음) - ask_llm에서 사용"""
         payload = {
@@ -433,7 +431,7 @@ class OllamaClient:
         }
         result = self._request("/api/chat", payload)
         content = result["message"]["content"]
-        
+
         try:
             return json.loads(content)
         except json.JSONDecodeError as e:
@@ -464,7 +462,7 @@ class OllamaAgentJsonMode:
                         ask_llm_model: str = None, ask_llm_max_tokens: int = None):
         """설정 업데이트"""
         global _AGENT_MODEL, _AGENT_MAX_TOKENS, _ASK_LLM_MODEL, _ASK_LLM_MAX_TOKENS
-        
+
         if agent_model:
             _AGENT_MODEL = agent_model
         if agent_max_tokens:
@@ -543,20 +541,20 @@ Example references:
         """Tool call 유효성 검사"""
         if tool_name not in TOOLS:
             return f"Unknown tool: {tool_name}. Available: {list(TOOLS.keys())}"
-        
+
         tool_info = TOOLS[tool_name]
         params = tool_info["parameters"]
-        
+
         for param_name, param_info in params.items():
             if param_info.get("required", False) and param_name not in arguments:
                 return f"Missing required parameter: '{param_name}' for tool '{tool_name}'"
-        
+
         valid_params = set(params.keys())
         provided_params = set(arguments.keys())
         unknown = provided_params - valid_params
         if unknown:
             return f"Unknown parameters: {unknown}. Valid: {valid_params}"
-        
+
         return None
 
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -564,7 +562,7 @@ Example references:
         error = self._validate_tool_call(tool_name, arguments)
         if error:
             return {"result": "failure", "error": error}
-        
+
         try:
             resolved_args = resolve_references(arguments)
             for param_name, param_info in TOOLS[tool_name]["parameters"].items():
@@ -580,14 +578,14 @@ Example references:
         """Tool 결과 요약"""
         if not isinstance(result, dict):
             return str(result)[:200]
-        
+
         summary_parts = []
         if "result" in result:
             summary_parts.append(f"status: {result['result']}")
         if "error" in result:
             summary_parts.append(f"error: {result['error']}")
             return "{" + ", ".join(summary_parts) + "}"
-        
+
         for key, value in result.items():
             if key in ["result", "error", "created_at", "created_by"]:
                 continue
@@ -603,7 +601,7 @@ Example references:
                 summary_parts.append(f"{key}: {{...}}")
             else:
                 summary_parts.append(f"{key}: {value}")
-        
+
         summary = "{" + ", ".join(summary_parts) + "}"
         if store_as:
             fields = [k for k in result.keys() if k not in ["result", "created_at", "created_by"]]
@@ -612,7 +610,7 @@ Example references:
                 summary += f" (fields: {', '.join(fields[:5])})"
         return summary
 
-    def chat(self, user_message: str, 
+    def chat(self, user_message: str,
              stream_callback: Callable[[str], None] = None,
              status_callback: Callable[[str], None] = None,
              confirm_callback: Callable[[str, Dict], bool] = None,
@@ -633,7 +631,7 @@ Example references:
                     temperature=0.7,
                     max_tokens=_AGENT_MAX_TOKENS
                 )
-                
+
                 if stream_callback:
                     stream_callback(json.dumps(response, indent=2, ensure_ascii=False))
 
@@ -707,7 +705,7 @@ Example references:
             except Exception as e:
                 if status_callback:
                     status_callback(f"❌ Error: {str(e)}")
-                
+
                 if "JSON" in str(e):
                     self.conversation_history.append({
                         "role": "user",
@@ -718,7 +716,7 @@ Example references:
                         })
                     })
                     continue
-                
+
                 return f"Error: {str(e)}"
 
         return "Max iterations reached"
@@ -773,7 +771,7 @@ class AgentGUI:
 
         # Agent 설정 (chat_json_mode)
         ttk.Label(model_frame, text="🤖 Agent (JSON Mode):", font=("", 9, "bold")).grid(row=0, column=0, padx=5, sticky=tk.W)
-        
+
         ttk.Label(model_frame, text="Model:").grid(row=0, column=1, padx=5, sticky=tk.E)
         self.agent_model_var = tk.StringVar()
         self.agent_model_combo = ttk.Combobox(model_frame, textvariable=self.agent_model_var, state="readonly", width=25)
@@ -789,7 +787,7 @@ class AgentGUI:
 
         # ask_llm 설정 (chat_simple)
         ttk.Label(model_frame, text="💬 ask_llm (Chat Mode):", font=("", 9, "bold")).grid(row=1, column=0, padx=5, sticky=tk.W, pady=(10,0))
-        
+
         ttk.Label(model_frame, text="Model:").grid(row=1, column=1, padx=5, sticky=tk.E, pady=(10,0))
         self.ask_llm_model_var = tk.StringVar()
         self.ask_llm_model_combo = ttk.Combobox(model_frame, textvariable=self.ask_llm_model_var, state="readonly", width=25)
@@ -825,28 +823,71 @@ class AgentGUI:
         self.chat_display = scrolledtext.ScrolledText(chat_container, wrap=tk.WORD, width=70, height=30, font=("Consolas", 10), state=tk.DISABLED)
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
-        # 오른쪽: Storage TreeView
+        # 오른쪽: Storage TreeView + 상세정보
         storage_container = ttk.LabelFrame(paned, text="📦 Storage ($key)", padding=5)
         paned.add(storage_container, weight=1)
 
-        self.storage_tree = ttk.Treeview(storage_container, show="tree headings", columns=("value",))
+        # TreeView와 상세정보를 좌우로 나눔
+        storage_paned = ttk.PanedWindow(storage_container, orient=tk.VERTICAL)
+        storage_paned.pack(fill=tk.BOTH, expand=True)
+
+        # 위쪽: TreeView
+        tree_frame = ttk.Frame(storage_paned)
+        storage_paned.add(tree_frame, weight=1)
+
+        self.storage_tree = ttk.Treeview(tree_frame, show="tree headings", columns=("value",))
         self.storage_tree.heading("#0", text="Key", anchor=tk.W)
         self.storage_tree.heading("value", text="Value", anchor=tk.W)
-        self.storage_tree.column("#0", width=120, minwidth=80)
+        self.storage_tree.column("#0", width=150, minwidth=80)
         self.storage_tree.column("value", width=200, minwidth=100)
 
-        tree_scroll_y = ttk.Scrollbar(storage_container, orient=tk.VERTICAL, command=self.storage_tree.yview)
-        tree_scroll_x = ttk.Scrollbar(storage_container, orient=tk.HORIZONTAL, command=self.storage_tree.xview)
+        tree_scroll_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.storage_tree.yview)
+        tree_scroll_x = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.storage_tree.xview)
         self.storage_tree.configure(yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set)
 
-        self.storage_tree.grid(row=0, column=0, sticky="nsew")
-        tree_scroll_y.grid(row=0, column=1, sticky="ns")
-        tree_scroll_x.grid(row=1, column=0, sticky="ew")
-        storage_container.grid_rowconfigure(0, weight=1)
-        storage_container.grid_columnconfigure(0, weight=1)
+        self.storage_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
 
-        refresh_storage_btn = ttk.Button(storage_container, text="🔄 Refresh", command=self.refresh_storage_tree)
-        refresh_storage_btn.grid(row=2, column=0, columnspan=2, pady=5, sticky="ew")
+        # TreeView 클릭 이벤트
+        self.storage_tree.bind("<<TreeviewSelect>>", self.on_storage_item_select)
+
+        # 아래쪽: 상세정보 패널
+        detail_frame = ttk.LabelFrame(storage_paned, text="📝 Detail View", padding=5)
+        storage_paned.add(detail_frame, weight=2)
+
+        # 경로 표시
+        self.detail_path_label = ttk.Label(detail_frame, text="Select an item to view details", font=("Consolas", 9), foreground="gray")
+        self.detail_path_label.pack(anchor=tk.W, pady=(0, 5))
+
+        # 값 표시 및 편집 영역
+        value_frame = ttk.Frame(detail_frame)
+        value_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(value_frame, text="Value:", font=("", 9, "bold")).pack(anchor=tk.W)
+
+        self.detail_text = scrolledtext.ScrolledText(value_frame, wrap=tk.WORD, height=10, font=("Consolas", 9))
+        self.detail_text.pack(fill=tk.BOTH, expand=True, pady=(2, 5))
+
+        # 버튼 프레임
+        btn_frame = ttk.Frame(detail_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
+
+        self.save_value_btn = ttk.Button(btn_frame, text="💾 Save", command=self.save_storage_value, state=tk.DISABLED)
+        self.save_value_btn.pack(side=tk.LEFT, padx=2)
+
+        self.delete_value_btn = ttk.Button(btn_frame, text="🗑️ Delete", command=self.delete_storage_value, state=tk.DISABLED)
+        self.delete_value_btn.pack(side=tk.LEFT, padx=2)
+
+        self.cancel_btn = ttk.Button(btn_frame, text="↩️ Cancel", command=self.cancel_edit, state=tk.DISABLED)
+        self.cancel_btn.pack(side=tk.LEFT, padx=2)
+
+        # 전체 새로고침 버튼
+        refresh_storage_btn = ttk.Button(storage_container, text="🔄 Refresh All", command=self.refresh_storage_tree)
+        refresh_storage_btn.pack(fill=tk.X, pady=5)
+
+        # 현재 선택된 항목 추적
+        self.selected_storage_path = None
+        self.original_value = None
 
         # 태그 설정
         self.chat_display.tag_config("user", foreground="#2196F3", font=("Consolas", 10, "bold"))
@@ -920,22 +961,260 @@ class AgentGUI:
         self._update_settings_label()
         self.append_text(f"[System] Agent created\n", "system")
 
+    def on_storage_item_select(self, event):
+        """TreeView 항목 선택 시 호출"""
+        selection = self.storage_tree.selection()
+        if not selection:
+            self._clear_detail_view()
+            return
+
+        item_id = selection[0]
+
+        # 경로 구성 (부모부터 추적)
+        path_parts = []
+        current_id = item_id
+
+        while current_id:
+            item_text = self.storage_tree.item(current_id, "text")
+            path_parts.insert(0, item_text)
+            current_id = self.storage_tree.parent(current_id)
+
+        if not path_parts:
+            self._clear_detail_view()
+            return
+
+        # 첫 번째는 $key 형태
+        key = path_parts[0].lstrip('$')
+
+        # Storage에서 값 가져오기
+        try:
+            value = TOOL_RESULT_STORAGE.get(key)
+            if value is None:
+                self._clear_detail_view()
+                return
+
+            # 하위 필드 접근
+            for field in path_parts[1:]:
+                if field == "(value)":  # 리프 노드
+                    continue
+                if isinstance(value, dict):
+                    value = value.get(field)
+                elif isinstance(value, list):
+                    # 리스트 인덱스 추출 (예: "item[0]")
+                    import re
+                    match = re.match(r'.*\[(\d+)\]', field)
+                    if match:
+                        idx = int(match.group(1))
+                        value = value[idx]
+                else:
+                    break
+
+            # 경로 표시
+            full_path = ".".join(path_parts) if len(path_parts) > 1 else path_parts[0]
+            self.detail_path_label.config(text=f"Path: {full_path}", foreground="blue")
+
+            # 값 표시
+            self._display_value(value, full_path)
+
+            # 버튼 활성화
+            self.save_value_btn.config(state=tk.NORMAL)
+            self.delete_value_btn.config(state=tk.NORMAL)
+            self.cancel_btn.config(state=tk.NORMAL)
+
+            # 현재 선택 정보 저장
+            self.selected_storage_path = (key, path_parts[1:] if len(path_parts) > 1 else [])
+            self.original_value = value
+
+        except Exception as e:
+            self._clear_detail_view()
+            self.detail_path_label.config(text=f"Error: {str(e)}", foreground="red")
+
+    def _display_value(self, value, path):
+        """값을 상세 패널에 표시"""
+        self.detail_text.config(state=tk.NORMAL)
+        self.detail_text.delete("1.0", tk.END)
+
+        if isinstance(value, (dict, list)):
+            # JSON 형태로 표시
+            formatted = json.dumps(value, indent=2, ensure_ascii=False)
+            self.detail_text.insert("1.0", formatted)
+        else:
+            # 문자열이나 기타 타입
+            self.detail_text.insert("1.0", str(value))
+
+        self.detail_text.config(state=tk.NORMAL)  # 편집 가능하게 유지
+
+    def _clear_detail_view(self):
+        """상세 패널 초기화"""
+        self.detail_path_label.config(text="Select an item to view details", foreground="gray")
+        self.detail_text.config(state=tk.NORMAL)
+        self.detail_text.delete("1.0", tk.END)
+        self.detail_text.config(state=tk.DISABLED)
+        
+        self.save_value_btn.config(state=tk.DISABLED)
+        self.delete_value_btn.config(state=tk.DISABLED)
+        self.cancel_btn.config(state=tk.DISABLED)
+        
+        self.selected_storage_path = None
+        self.original_value = None
+
+    def save_storage_value(self):
+        """편집된 값을 저장"""
+        if not self.selected_storage_path:
+            return
+
+        key, field_path = self.selected_storage_path
+        new_value_text = self.detail_text.get("1.0", tk.END).strip()
+
+        try:
+            # JSON 파싱 시도
+            if new_value_text.startswith('{') or new_value_text.startswith('['):
+                new_value = json.loads(new_value_text)
+            else:
+                # 일반 문자열로 처리
+                new_value = new_value_text
+
+            # 저장소 업데이트
+            if not field_path:
+                # 최상위 키 전체 교체
+                TOOL_RESULT_STORAGE[key] = new_value
+            else:
+                # 중첩 필드 업데이트
+                data = TOOL_RESULT_STORAGE[key]
+                current = data
+
+                for i, field in enumerate(field_path[:-1]):
+                    if field == "(value)":
+                        continue
+                    if isinstance(current, dict):
+                        current = current[field]
+                    elif isinstance(current, list):
+                        import re
+                        match = re.match(r'.*\[(\d+)\]', field)
+                        if match:
+                            idx = int(match.group(1))
+                            current = current[idx]
+
+                # 마지막 필드에 값 설정
+                last_field = field_path[-1]
+                if last_field != "(value)":
+                    if isinstance(current, dict):
+                        current[last_field] = new_value
+                    elif isinstance(current, list):
+                        import re
+                        match = re.match(r'.*\[(\d+)\]', last_field)
+                        if match:
+                            idx = int(match.group(1))
+                            current[idx] = new_value
+
+            # UI 업데이트
+            self.refresh_storage_tree()
+            self.append_text(f"[System] 💾 Saved: ${key}" + ("." + ".".join(field_path) if field_path else "") + "\n", "system")
+            messagebox.showinfo("Success", "Value saved successfully!")
+
+        except json.JSONDecodeError as e:
+            messagebox.showerror("JSON Error", f"Invalid JSON format:\n{str(e)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save value:\n{str(e)}")
+
+    def delete_storage_value(self):
+        """선택된 값 삭제"""
+        if not self.selected_storage_path:
+            return
+
+        key, field_path = self.selected_storage_path
+
+        # 확인 대화상자
+        path_str = f"${key}" + ("." + ".".join(field_path) if field_path else "")
+        if not messagebox.askyesno("Confirm Delete", f"Delete this item?\n\n{path_str}"):
+            return
+
+        try:
+            if not field_path:
+                # 최상위 키 전체 삭제
+                del TOOL_RESULT_STORAGE[key]
+            else:
+                # 중첩 필드 삭제
+                data = TOOL_RESULT_STORAGE[key]
+                current = data
+
+                for i, field in enumerate(field_path[:-1]):
+                    if field == "(value)":
+                        continue
+                    if isinstance(current, dict):
+                        current = current[field]
+                    elif isinstance(current, list):
+                        import re
+                        match = re.match(r'.*\[(\d+)\]', field)
+                        if match:
+                            idx = int(match.group(1))
+                            current = current[idx]
+
+                # 마지막 필드 삭제
+                last_field = field_path[-1]
+                if last_field != "(value)":
+                    if isinstance(current, dict):
+                        del current[last_field]
+                    elif isinstance(current, list):
+                        import re
+                        match = re.match(r'.*\[(\d+)\]', last_field)
+                        if match:
+                            idx = int(match.group(1))
+                            current.pop(idx)
+
+            # UI 업데이트
+            self._clear_detail_view()
+            self.refresh_storage_tree()
+            self.append_text(f"[System] 🗑️ Deleted: {path_str}\n", "system")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete value:\n{str(e)}")
+
+    def cancel_edit(self):
+        """편집 취소 (원래 값으로 복원)"""
+        if self.original_value is not None:
+            self._display_value(self.original_value, "")
+            self.append_text("[System] ↩️ Edit cancelled\n", "system")
+
     def refresh_storage_tree(self):
+        """Storage TreeView 새로고침"""
+        # 기존 항목 제거
         for item in self.storage_tree.get_children():
             self.storage_tree.delete(item)
+
+        # Storage 내용 표시
         for key, value in TOOL_RESULT_STORAGE.items():
             parent_id = self.storage_tree.insert("", tk.END, text=f"${key}", open=True)
-            if isinstance(value, dict):
-                for field, field_value in value.items():
+            self._add_tree_items(parent_id, value)
+
+    def _add_tree_items(self, parent, value):
+        """재귀적으로 트리 항목 추가"""
+        if isinstance(value, dict):
+            for field, field_value in value.items():
+                if isinstance(field_value, (dict, list)):
+                    child_id = self.storage_tree.insert(parent, tk.END, text=field, values=("",))
+                    self._add_tree_items(child_id, field_value)
+                else:
                     display_value = self._format_tree_value(field_value)
-                    self.storage_tree.insert(parent_id, tk.END, text=field, values=(display_value,))
-            else:
-                display_value = self._format_tree_value(value)
-                self.storage_tree.insert(parent_id, tk.END, text="(value)", values=(display_value,))
+                    self.storage_tree.insert(parent, tk.END, text=field, values=(display_value,))
+        elif isinstance(value, list):
+            for i, item in enumerate(value):
+                if isinstance(item, (dict, list)):
+                    child_id = self.storage_tree.insert(parent, tk.END, text=f"[{i}]", values=("",))
+                    self._add_tree_items(child_id, item)
+                else:
+                    display_value = self._format_tree_value(item)
+                    self.storage_tree.insert(parent, tk.END, text=f"[{i}]", values=(display_value,))
+        else:
+            display_value = self._format_tree_value(value)
+            self.storage_tree.insert(parent, tk.END, text="(value)", values=(display_value,))
 
     def _format_tree_value(self, value: Any) -> str:
+        """트리뷰에 표시할 값 포맷팅"""
         if isinstance(value, str):
-            return f"<{len(value)} chars>" if len(value) > 50 else value
+            if len(value) > 50:
+                return f"<{len(value)} chars>"
+            return value
         elif isinstance(value, list):
             return f"[{len(value)} items]"
         elif isinstance(value, dict):
