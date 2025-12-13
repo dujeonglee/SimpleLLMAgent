@@ -54,10 +54,10 @@ def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
     지원하는 참조 형식:
     1. 값 전체가 참조인 경우:
        - {"context": "$source_code.content"} → {"context": "파일 내용..."}
-
+    
     2. 문자열 내부에 참조가 포함된 경우:
        - {"query": "분석해줘: $source_code.content"} → {"query": "분석해줘: 파일 내용..."}
-
+    
     참조 문법:
     - $key: 전체 값
     - $key.field: 특정 필드
@@ -77,29 +77,29 @@ def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
 def _resolve_string_references(text: str) -> Any:
     """
     문자열 내의 모든 $key.field 참조를 치환
-
+    
     - 문자열 전체가 단일 참조면 해당 타입 그대로 반환 (dict, list 등)
     - 문자열 내에 참조가 포함되어 있으면 문자열로 치환
     """
     import re
-
+    
     pattern = r'\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[\d+\])*)'
     matches = list(re.finditer(pattern, text))
 
     if not matches:
         return text
-
+    
     if len(matches) == 1:
         match = matches[0]
         if text.strip() == match.group(0):
             ref = match.group(1)
             return _resolve_single_reference(ref, match.group(0))
-
+    
     result = text
     for match in reversed(matches):
         ref = match.group(1)
         full_match = match.group(0)
-
+        
         try:
             resolved_value = _resolve_single_reference(ref, full_match)
             if isinstance(resolved_value, str):
@@ -108,37 +108,37 @@ def _resolve_string_references(text: str) -> Any:
                 replacement = json.dumps(resolved_value, ensure_ascii=False)
             else:
                 replacement = str(resolved_value)
-
+            
             result = result[:match.start()] + replacement + result[match.end():]
         except ValueError:
             raise
-
+    
     return result
 
 def _resolve_single_reference(ref: str, original: str) -> Any:
     """단일 참조를 해석"""
     import re
-
+    
     if "." in ref:
         key, rest = ref.split(".", 1)
     else:
         key = ref
         rest = None
-
+    
     data = TOOL_RESULT_STORAGE.get(key)
     if data is None:
         raise ValueError(f"Reference '{original}' not found. Available keys: {list(TOOL_RESULT_STORAGE.keys())}")
-
+    
     if rest is None:
         return data
-
+    
     tokens = re.findall(r'(\w+)|\[(\d+)\]', rest)
     current = data
     path_so_far = f"${key}"
-
+    
     for token in tokens:
         field_name, index = token
-
+        
         if field_name:
             path_so_far += f".{field_name}"
             if not isinstance(current, dict):
@@ -155,7 +155,7 @@ def _resolve_single_reference(ref: str, original: str) -> Any:
             if idx < 0 or idx >= len(current):
                 raise ValueError(f"Index [{idx}] out of range at '{path_so_far}'. List has {len(current)} items (0-{len(current)-1})")
             current = current[idx]
-
+    
     return current
 
 
@@ -167,11 +167,12 @@ def make_return_object(data: Dict[str, Any]) -> Dict[str, Any]:
     }
     return {**base, **data}
 
+
 def get_storage_summary() -> str:
     """현재 저장소 상태 요약"""
     if not TOOL_RESULT_STORAGE:
         return "저장된 데이터가 없습니다."
-
+    
     summary = []
     for key, value in TOOL_RESULT_STORAGE.items():
         if isinstance(value, dict):
@@ -180,6 +181,7 @@ def get_storage_summary() -> str:
         else:
             summary.append(f"${key}: {type(value).__name__}")
     return ", ".join(summary)
+
 
 # ============================================================================
 # 도구 정의
@@ -401,13 +403,13 @@ class OllamaClient:
         headers = {'Content-Type': 'application/json'}
         data = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(f"{self.base_url}{endpoint}", data=data, headers=headers)
-
+        
         with urllib.request.urlopen(req, timeout=timeout) as response:
             if response.getcode() != 200:
                 raise Exception(f"Ollama API error: {response.getcode()}")
             return json.loads(response.read().decode('utf-8'))
 
-    def chat_simple(self, model: str, messages: List[Dict],
+    def chat_simple(self, model: str, messages: List[Dict], 
                     temperature: float = 0.7, max_tokens: int = 4000) -> str:
         """단순 채팅 (스트리밍 없음, JSON 모드 없음) - ask_llm에서 사용"""
         payload = {
@@ -431,7 +433,7 @@ class OllamaClient:
         }
         result = self._request("/api/chat", payload)
         content = result["message"]["content"]
-
+        
         try:
             return json.loads(content)
         except json.JSONDecodeError as e:
@@ -462,7 +464,7 @@ class OllamaAgentJsonMode:
                         ask_llm_model: str = None, ask_llm_max_tokens: int = None):
         """설정 업데이트"""
         global _AGENT_MODEL, _AGENT_MAX_TOKENS, _ASK_LLM_MODEL, _ASK_LLM_MAX_TOKENS
-
+        
         if agent_model:
             _AGENT_MODEL = agent_model
         if agent_max_tokens:
@@ -541,20 +543,20 @@ Example references:
         """Tool call 유효성 검사"""
         if tool_name not in TOOLS:
             return f"Unknown tool: {tool_name}. Available: {list(TOOLS.keys())}"
-
+        
         tool_info = TOOLS[tool_name]
         params = tool_info["parameters"]
-
+        
         for param_name, param_info in params.items():
             if param_info.get("required", False) and param_name not in arguments:
                 return f"Missing required parameter: '{param_name}' for tool '{tool_name}'"
-
+        
         valid_params = set(params.keys())
         provided_params = set(arguments.keys())
         unknown = provided_params - valid_params
         if unknown:
             return f"Unknown parameters: {unknown}. Valid: {valid_params}"
-
+        
         return None
 
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -562,7 +564,7 @@ Example references:
         error = self._validate_tool_call(tool_name, arguments)
         if error:
             return {"result": "failure", "error": error}
-
+        
         try:
             resolved_args = resolve_references(arguments)
             for param_name, param_info in TOOLS[tool_name]["parameters"].items():
@@ -578,14 +580,14 @@ Example references:
         """Tool 결과 요약"""
         if not isinstance(result, dict):
             return str(result)[:200]
-
+        
         summary_parts = []
         if "result" in result:
             summary_parts.append(f"status: {result['result']}")
         if "error" in result:
             summary_parts.append(f"error: {result['error']}")
             return "{" + ", ".join(summary_parts) + "}"
-
+        
         for key, value in result.items():
             if key in ["result", "error", "created_at", "created_by"]:
                 continue
@@ -601,7 +603,7 @@ Example references:
                 summary_parts.append(f"{key}: {{...}}")
             else:
                 summary_parts.append(f"{key}: {value}")
-
+        
         summary = "{" + ", ".join(summary_parts) + "}"
         if store_as:
             fields = [k for k in result.keys() if k not in ["result", "created_at", "created_by"]]
@@ -610,7 +612,7 @@ Example references:
                 summary += f" (fields: {', '.join(fields[:5])})"
         return summary
 
-    def chat(self, user_message: str,
+    def chat(self, user_message: str, 
              stream_callback: Callable[[str], None] = None,
              status_callback: Callable[[str], None] = None,
              confirm_callback: Callable[[str, Dict], bool] = None,
@@ -631,7 +633,7 @@ Example references:
                     temperature=0.7,
                     max_tokens=_AGENT_MAX_TOKENS
                 )
-
+                
                 if stream_callback:
                     stream_callback(json.dumps(response, indent=2, ensure_ascii=False))
 
@@ -705,7 +707,7 @@ Example references:
             except Exception as e:
                 if status_callback:
                     status_callback(f"❌ Error: {str(e)}")
-
+                
                 if "JSON" in str(e):
                     self.conversation_history.append({
                         "role": "user",
@@ -716,7 +718,7 @@ Example references:
                         })
                     })
                     continue
-
+                
                 return f"Error: {str(e)}"
 
         return "Max iterations reached"
@@ -771,7 +773,7 @@ class AgentGUI:
 
         # Agent 설정 (chat_json_mode)
         ttk.Label(model_frame, text="🤖 Agent (JSON Mode):", font=("", 9, "bold")).grid(row=0, column=0, padx=5, sticky=tk.W)
-
+        
         ttk.Label(model_frame, text="Model:").grid(row=0, column=1, padx=5, sticky=tk.E)
         self.agent_model_var = tk.StringVar()
         self.agent_model_combo = ttk.Combobox(model_frame, textvariable=self.agent_model_var, state="readonly", width=25)
@@ -787,7 +789,7 @@ class AgentGUI:
 
         # ask_llm 설정 (chat_simple)
         ttk.Label(model_frame, text="💬 ask_llm (Chat Mode):", font=("", 9, "bold")).grid(row=1, column=0, padx=5, sticky=tk.W, pady=(10,0))
-
+        
         ttk.Label(model_frame, text="Model:").grid(row=1, column=1, padx=5, sticky=tk.E, pady=(10,0))
         self.ask_llm_model_var = tk.StringVar()
         self.ask_llm_model_combo = ttk.Combobox(model_frame, textvariable=self.ask_llm_model_var, state="readonly", width=25)
@@ -809,31 +811,90 @@ class AgentGUI:
         confirm_check = ttk.Checkbutton(model_frame, text="Tool 실행 전 확인", variable=self.confirm_tool_execution)
         confirm_check.grid(row=2, column=4, padx=10, pady=(10,0), sticky=tk.E)
 
-        # ===== 채팅 영역 =====
-        chat_frame = ttk.LabelFrame(self.root, text="💬 Conversation", padding=10)
-        chat_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # ===== 메인 영역 - Notebook 탭 =====
+        main_notebook = ttk.Notebook(self.root)
+        main_notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        paned = ttk.PanedWindow(chat_frame, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True)
+        # ===== Tab 1: Chat =====
+        chat_tab = ttk.Frame(main_notebook)
+        main_notebook.add(chat_tab, text="💬 Chat")
 
-        # 왼쪽: 채팅 디스플레이
-        chat_container = ttk.Frame(paned)
-        paned.add(chat_container, weight=3)
-
-        self.chat_display = scrolledtext.ScrolledText(chat_container, wrap=tk.WORD, width=70, height=30, font=("Consolas", 10), state=tk.DISABLED)
+        self.chat_display = scrolledtext.ScrolledText(chat_tab, wrap=tk.WORD, font=("Consolas", 10), state=tk.DISABLED)
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
-        # 오른쪽: Storage TreeView + 상세정보
-        storage_container = ttk.LabelFrame(paned, text="📦 Storage ($key)", padding=5)
-        paned.add(storage_container, weight=1)
+        # ===== Tab 2: History =====
+        history_tab = ttk.Frame(main_notebook)
+        main_notebook.add(history_tab, text="📜 History")
+
+        # History 툴바
+        history_toolbar = ttk.Frame(history_tab)
+        history_toolbar.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(history_toolbar, text="Conversation History:", font=("", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        self.history_count_label = ttk.Label(history_toolbar, text="(0 messages)", foreground="gray")
+        self.history_count_label.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(history_toolbar, text="🔄 Refresh", command=self.refresh_history).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(history_toolbar, text="📋 Copy JSON", command=self.copy_history_json).pack(side=tk.RIGHT, padx=5)
+
+        # History TreeView
+        history_paned = ttk.PanedWindow(history_tab, orient=tk.HORIZONTAL)
+        history_paned.pack(fill=tk.BOTH, expand=True)
+
+        # 왼쪽: 메시지 리스트
+        history_list_frame = ttk.Frame(history_paned)
+        history_paned.add(history_list_frame, weight=1)
+
+        self.history_tree = ttk.Treeview(history_list_frame, columns=("role", "preview"), show="tree headings")
+        self.history_tree.heading("#0", text="#", anchor=tk.W)
+        self.history_tree.heading("role", text="Role", anchor=tk.W)
+        self.history_tree.heading("preview", text="Preview", anchor=tk.W)
+        self.history_tree.column("#0", width=50, minwidth=30)
+        self.history_tree.column("role", width=100, minwidth=80)
+        self.history_tree.column("preview", width=400, minwidth=200)
+
+        history_scroll_y = ttk.Scrollbar(history_list_frame, orient=tk.VERTICAL, command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=history_scroll_y.set)
+
+        self.history_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        history_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.history_tree.bind("<<TreeviewSelect>>", self.on_history_select)
+
+        # 오른쪽: 메시지 상세 내용
+        history_detail_frame = ttk.LabelFrame(history_paned, text="📄 Message Detail", padding=5)
+        history_paned.add(history_detail_frame, weight=2)
+
+        self.history_detail = scrolledtext.ScrolledText(history_detail_frame, wrap=tk.WORD, font=("Consolas", 9))
+        self.history_detail.pack(fill=tk.BOTH, expand=True)
+
+        # System Prompt 섹션
+        system_prompt_frame = ttk.LabelFrame(history_tab, text="🔧 Current System Prompt", padding=5)
+        system_prompt_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+
+        self.system_prompt_display = scrolledtext.ScrolledText(system_prompt_frame, wrap=tk.WORD, height=10, font=("Consolas", 9), state=tk.DISABLED)
+        self.system_prompt_display.pack(fill=tk.BOTH, expand=True)
+
+        # ===== Tab 3: Storage =====
+        storage_tab = ttk.Frame(main_notebook)
+        main_notebook.add(storage_tab, text="📦 Storage")
+
+        # Storage TreeView + 상세정보 (기존 코드 이동)
+        storage_paned = ttk.PanedWindow(storage_tab, orient=tk.HORIZONTAL)
+        storage_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # 왼쪽: Storage TreeView
+        storage_tree_container = ttk.LabelFrame(storage_paned, text="🗂️ Storage Tree", padding=5)
+        storage_paned.add(storage_tree_container, weight=1)
 
         # TreeView와 상세정보를 좌우로 나눔
-        storage_paned = ttk.PanedWindow(storage_container, orient=tk.VERTICAL)
-        storage_paned.pack(fill=tk.BOTH, expand=True)
+        storage_tree_paned = ttk.PanedWindow(storage_tree_container, orient=tk.VERTICAL)
+        storage_tree_paned.pack(fill=tk.BOTH, expand=True)
 
         # 위쪽: TreeView
-        tree_frame = ttk.Frame(storage_paned)
-        storage_paned.add(tree_frame, weight=1)
+        tree_frame = ttk.Frame(storage_tree_paned)
+        storage_tree_paned.add(tree_frame, weight=1)
 
         self.storage_tree = ttk.Treeview(tree_frame, show="tree headings", columns=("value",))
         self.storage_tree.heading("#0", text="Key", anchor=tk.W)
@@ -852,8 +913,8 @@ class AgentGUI:
         self.storage_tree.bind("<<TreeviewSelect>>", self.on_storage_item_select)
 
         # 아래쪽: 상세정보 패널
-        detail_frame = ttk.LabelFrame(storage_paned, text="📝 Detail View", padding=5)
-        storage_paned.add(detail_frame, weight=2)
+        detail_frame = ttk.LabelFrame(storage_tree_paned, text="📝 Detail View", padding=5)
+        storage_tree_paned.add(detail_frame, weight=2)
 
         # 경로 표시
         self.detail_path_label = ttk.Label(detail_frame, text="Select an item to view details", font=("Consolas", 9), foreground="gray")
@@ -864,7 +925,7 @@ class AgentGUI:
         value_frame.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(value_frame, text="Value:", font=("", 9, "bold")).pack(anchor=tk.W)
-
+        
         self.detail_text = scrolledtext.ScrolledText(value_frame, wrap=tk.WORD, height=10, font=("Consolas", 9))
         self.detail_text.pack(fill=tk.BOTH, expand=True, pady=(2, 5))
 
@@ -882,21 +943,16 @@ class AgentGUI:
         self.cancel_btn.pack(side=tk.LEFT, padx=2)
 
         # 전체 새로고침 버튼
-        refresh_storage_btn = ttk.Button(storage_container, text="🔄 Refresh All", command=self.refresh_storage_tree)
+        refresh_storage_btn = ttk.Button(storage_tree_container, text="🔄 Refresh All", command=self.refresh_storage_tree)
         refresh_storage_btn.pack(fill=tk.X, pady=5)
 
         # 현재 선택된 항목 추적
         self.selected_storage_path = None
         self.original_value = None
 
-        # 태그 설정
-        self.chat_display.tag_config("user", foreground="#2196F3", font=("Consolas", 10, "bold"))
-        self.chat_display.tag_config("assistant", foreground="#4CAF50", font=("Consolas", 10))
-        self.chat_display.tag_config("system", foreground="#FF9800", font=("Consolas", 9, "italic"))
-
-        # ===== 입력 영역 =====
-        input_frame = ttk.Frame(chat_frame)
-        input_frame.pack(fill=tk.X)
+        # ===== 채팅 입력 영역 (Chat 탭에 추가) =====
+        input_frame = ttk.Frame(chat_tab)
+        input_frame.pack(fill=tk.X, pady=(5, 0))
 
         self.input_text = tk.Text(input_frame, height=3, font=("Consolas", 10))
         self.input_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
@@ -910,6 +966,16 @@ class AgentGUI:
 
         self.reset_btn = ttk.Button(btn_frame, text="Reset\nChat", command=self.reset_chat, state=tk.DISABLED)
         self.reset_btn.pack(fill=tk.BOTH, expand=True)
+
+        # 채팅 디스플레이 태그 설정
+        self.chat_display.tag_config("user", foreground="#2196F3", font=("Consolas", 10, "bold"))
+        self.chat_display.tag_config("assistant", foreground="#4CAF50", font=("Consolas", 10))
+        self.chat_display.tag_config("system", foreground="#FF9800", font=("Consolas", 9, "italic"))
+
+        # History 디스플레이 태그 설정
+        self.history_detail.tag_config("role", foreground="#1976D2", font=("Consolas", 9, "bold"))
+        self.history_detail.tag_config("content", foreground="#333333", font=("Consolas", 9))
+        self.history_detail.tag_config("json", foreground="#00796B", font=("Consolas", 9))
 
         # ===== 도구 정보 =====
         tools_frame = ttk.LabelFrame(self.root, text="🔧 Available Tools", padding=10)
@@ -969,30 +1035,30 @@ class AgentGUI:
             return
 
         item_id = selection[0]
-
+        
         # 경로 구성 (부모부터 추적)
         path_parts = []
         current_id = item_id
-
+        
         while current_id:
             item_text = self.storage_tree.item(current_id, "text")
             path_parts.insert(0, item_text)
             current_id = self.storage_tree.parent(current_id)
-
+        
         if not path_parts:
             self._clear_detail_view()
             return
-
+        
         # 첫 번째는 $key 형태
         key = path_parts[0].lstrip('$')
-
+        
         # Storage에서 값 가져오기
         try:
             value = TOOL_RESULT_STORAGE.get(key)
             if value is None:
                 self._clear_detail_view()
                 return
-
+            
             # 하위 필드 접근
             for field in path_parts[1:]:
                 if field == "(value)":  # 리프 노드
@@ -1008,23 +1074,23 @@ class AgentGUI:
                         value = value[idx]
                 else:
                     break
-
+            
             # 경로 표시
             full_path = ".".join(path_parts) if len(path_parts) > 1 else path_parts[0]
             self.detail_path_label.config(text=f"Path: {full_path}", foreground="blue")
-
+            
             # 값 표시
             self._display_value(value, full_path)
-
+            
             # 버튼 활성화
             self.save_value_btn.config(state=tk.NORMAL)
             self.delete_value_btn.config(state=tk.NORMAL)
             self.cancel_btn.config(state=tk.NORMAL)
-
+            
             # 현재 선택 정보 저장
             self.selected_storage_path = (key, path_parts[1:] if len(path_parts) > 1 else [])
             self.original_value = value
-
+            
         except Exception as e:
             self._clear_detail_view()
             self.detail_path_label.config(text=f"Error: {str(e)}", foreground="red")
@@ -1033,7 +1099,7 @@ class AgentGUI:
         """값을 상세 패널에 표시"""
         self.detail_text.config(state=tk.NORMAL)
         self.detail_text.delete("1.0", tk.END)
-
+        
         if isinstance(value, (dict, list)):
             # JSON 형태로 표시
             formatted = json.dumps(value, indent=2, ensure_ascii=False)
@@ -1041,7 +1107,7 @@ class AgentGUI:
         else:
             # 문자열이나 기타 타입
             self.detail_text.insert("1.0", str(value))
-
+        
         self.detail_text.config(state=tk.NORMAL)  # 편집 가능하게 유지
 
     def _clear_detail_view(self):
@@ -1062,10 +1128,10 @@ class AgentGUI:
         """편집된 값을 저장"""
         if not self.selected_storage_path:
             return
-
+        
         key, field_path = self.selected_storage_path
         new_value_text = self.detail_text.get("1.0", tk.END).strip()
-
+        
         try:
             # JSON 파싱 시도
             if new_value_text.startswith('{') or new_value_text.startswith('['):
@@ -1073,7 +1139,7 @@ class AgentGUI:
             else:
                 # 일반 문자열로 처리
                 new_value = new_value_text
-
+            
             # 저장소 업데이트
             if not field_path:
                 # 최상위 키 전체 교체
@@ -1082,7 +1148,7 @@ class AgentGUI:
                 # 중첩 필드 업데이트
                 data = TOOL_RESULT_STORAGE[key]
                 current = data
-
+                
                 for i, field in enumerate(field_path[:-1]):
                     if field == "(value)":
                         continue
@@ -1094,7 +1160,7 @@ class AgentGUI:
                         if match:
                             idx = int(match.group(1))
                             current = current[idx]
-
+                
                 # 마지막 필드에 값 설정
                 last_field = field_path[-1]
                 if last_field != "(value)":
@@ -1106,12 +1172,12 @@ class AgentGUI:
                         if match:
                             idx = int(match.group(1))
                             current[idx] = new_value
-
+            
             # UI 업데이트
             self.refresh_storage_tree()
             self.append_text(f"[System] 💾 Saved: ${key}" + ("." + ".".join(field_path) if field_path else "") + "\n", "system")
             messagebox.showinfo("Success", "Value saved successfully!")
-
+            
         except json.JSONDecodeError as e:
             messagebox.showerror("JSON Error", f"Invalid JSON format:\n{str(e)}")
         except Exception as e:
@@ -1121,14 +1187,14 @@ class AgentGUI:
         """선택된 값 삭제"""
         if not self.selected_storage_path:
             return
-
+        
         key, field_path = self.selected_storage_path
-
+        
         # 확인 대화상자
         path_str = f"${key}" + ("." + ".".join(field_path) if field_path else "")
         if not messagebox.askyesno("Confirm Delete", f"Delete this item?\n\n{path_str}"):
             return
-
+        
         try:
             if not field_path:
                 # 최상위 키 전체 삭제
@@ -1137,7 +1203,7 @@ class AgentGUI:
                 # 중첩 필드 삭제
                 data = TOOL_RESULT_STORAGE[key]
                 current = data
-
+                
                 for i, field in enumerate(field_path[:-1]):
                     if field == "(value)":
                         continue
@@ -1149,7 +1215,7 @@ class AgentGUI:
                         if match:
                             idx = int(match.group(1))
                             current = current[idx]
-
+                
                 # 마지막 필드 삭제
                 last_field = field_path[-1]
                 if last_field != "(value)":
@@ -1161,12 +1227,12 @@ class AgentGUI:
                         if match:
                             idx = int(match.group(1))
                             current.pop(idx)
-
+            
             # UI 업데이트
             self._clear_detail_view()
             self.refresh_storage_tree()
             self.append_text(f"[System] 🗑️ Deleted: {path_str}\n", "system")
-
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to delete value:\n{str(e)}")
 
@@ -1176,12 +1242,135 @@ class AgentGUI:
             self._display_value(self.original_value, "")
             self.append_text("[System] ↩️ Edit cancelled\n", "system")
 
+    def refresh_history(self):
+        """대화 히스토리 TreeView 갱신"""
+        # 기존 항목 제거
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        
+        if not self.agent:
+            self.history_count_label.config(text="(No agent)")
+            return
+        
+        history = self.agent.conversation_history
+        self.history_count_label.config(text=f"({len(history)} messages)")
+        
+        # 각 메시지를 TreeView에 추가
+        for idx, msg in enumerate(history):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            
+            # Preview 생성 (첫 100자)
+            if isinstance(content, str):
+                preview = content[:100].replace("\n", " ")
+                if len(content) > 100:
+                    preview += "..."
+            else:
+                preview = str(content)[:100]
+            
+            # Role 색상 매핑
+            role_colors = {
+                "system": "#9C27B0",
+                "user": "#2196F3",
+                "assistant": "#4CAF50"
+            }
+            
+            item_id = self.history_tree.insert("", tk.END, text=f"{idx+1}", values=(role, preview))
+            
+            # Role별 태그 설정
+            if role in role_colors:
+                self.history_tree.item(item_id, tags=(role,))
+        
+        # 태그 색상 설정
+        for role, color in {"system": "#9C27B0", "user": "#2196F3", "assistant": "#4CAF50"}.items():
+            self.history_tree.tag_configure(role, foreground=color)
+        
+        # System Prompt 업데이트
+        self.update_system_prompt_display()
+
+    def on_history_select(self, event):
+        """History TreeView 항목 선택 시 호출"""
+        selection = self.history_tree.selection()
+        if not selection:
+            return
+        
+        item_id = selection[0]
+        idx_text = self.history_tree.item(item_id, "text")
+        
+        try:
+            idx = int(idx_text) - 1
+            if not self.agent or idx >= len(self.agent.conversation_history):
+                return
+            
+            msg = self.agent.conversation_history[idx]
+            
+            # 상세 내용 표시
+            self.history_detail.config(state=tk.NORMAL)
+            self.history_detail.delete("1.0", tk.END)
+            
+            # Role 표시
+            role = msg.get("role", "unknown")
+            self.history_detail.insert(tk.END, f"Role: ", "role")
+            self.history_detail.insert(tk.END, f"{role}\n\n", "content")
+            
+            # Content 표시
+            content = msg.get("content", "")
+            self.history_detail.insert(tk.END, "Content:\n", "role")
+            
+            # JSON 파싱 시도
+            if isinstance(content, str):
+                try:
+                    parsed = json.loads(content)
+                    formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
+                    self.history_detail.insert(tk.END, formatted, "json")
+                except:
+                    self.history_detail.insert(tk.END, content, "content")
+            else:
+                self.history_detail.insert(tk.END, str(content), "content")
+            
+            self.history_detail.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            print(f"History select error: {e}")
+
+    def update_system_prompt_display(self):
+        """현재 System Prompt 표시"""
+        if not self.agent:
+            self.system_prompt_display.config(state=tk.NORMAL)
+            self.system_prompt_display.delete("1.0", tk.END)
+            self.system_prompt_display.insert("1.0", "No agent connected")
+            self.system_prompt_display.config(state=tk.DISABLED)
+            return
+        
+        try:
+            prompt = self.agent._create_system_prompt()
+            self.system_prompt_display.config(state=tk.NORMAL)
+            self.system_prompt_display.delete("1.0", tk.END)
+            self.system_prompt_display.insert("1.0", prompt)
+            self.system_prompt_display.config(state=tk.DISABLED)
+        except Exception as e:
+            print(f"System prompt update error: {e}")
+
+    def copy_history_json(self):
+        """대화 히스토리를 JSON으로 복사"""
+        if not self.agent:
+            messagebox.showwarning("Warning", "No conversation history")
+            return
+        
+        try:
+            history_json = json.dumps(self.agent.conversation_history, indent=2, ensure_ascii=False)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(history_json)
+            messagebox.showinfo("Success", "History copied to clipboard as JSON!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to copy history:\n{str(e)}")
+
     def refresh_storage_tree(self):
         """Storage TreeView 새로고침"""
         # 기존 항목 제거
         for item in self.storage_tree.get_children():
             self.storage_tree.delete(item)
-
+        
         # Storage 내용 표시
         for key, value in TOOL_RESULT_STORAGE.items():
             parent_id = self.storage_tree.insert("", tk.END, text=f"${key}", open=True)
@@ -1305,6 +1494,7 @@ Arguments:
                 def status_cb(status):
                     self.append_text(f"\n[{status}]\n", "system")
                     self.root.after(0, self.refresh_storage_tree)
+                    self.root.after(0, self.refresh_history)
                 def confirm_cb(tool_name, arguments):
                     result_container = [None]
                     event = threading.Event()
@@ -1335,6 +1525,7 @@ Arguments:
         self.chat_display.delete("1.0", tk.END)
         self.chat_display.config(state=tk.DISABLED)
         self.refresh_storage_tree()
+        self.refresh_history()
         self.append_text("[System] Chat reset! 🔄\n\n", "system")
 
 
