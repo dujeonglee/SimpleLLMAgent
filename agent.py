@@ -92,6 +92,7 @@ def make_return_object(data: Dict[str, Any]) -> Dict[str, Any]:
     }
     return {**base, **data}
 
+
 # ============================================================================
 # 도구 정의
 # ============================================================================
@@ -107,7 +108,7 @@ def get_file(base_dir: str = ".", pattern: str = "*") -> Dict[str, Any]:
         if not base_path.exists():
             return make_return_object({
                 "result": "failure",
-                "base_dir": str(base_path),
+                "base_dir": base_dir,
                 "error": f"Directory '{base_dir}' does not exist"
             })
 
@@ -124,7 +125,7 @@ def get_file(base_dir: str = ".", pattern: str = "*") -> Dict[str, Any]:
                 for f in base_path.rglob(pattern)
                 if f.is_file()
             ]
-
+        
         return make_return_object({
             "result": "success",
             "base_dir": str(base_path),
@@ -133,11 +134,11 @@ def get_file(base_dir: str = ".", pattern: str = "*") -> Dict[str, Any]:
         })
 
     except Exception as e:
-        return make_return_object({
-            "result": "failure",
-            "base_dir": str(base_path),
-            "error": str(e)
-        })
+            return make_return_object({
+                "result": "failure",
+                "base_dir": base_dir,
+                "error": str(e)
+            })
 
 def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     """
@@ -146,7 +147,7 @@ def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     try:
         # 파일 존재 확인
         if not os.path.exists(file_path):
-            make_return_object({
+            return make_return_object({
                 "result": "failure",
                 "filename": file_path,
                 "error": f"File '{file_path}' does not exist"
@@ -270,8 +271,7 @@ Please provide a detailed and helpful response."""
 
         return make_return_object({
             "result": "success",
-            "response": response,
-            "response_length": len(response),
+            "response": response
         })
 
     except Exception as e:
@@ -359,7 +359,7 @@ TOOLS = {
                 "description": "Additional context like file content (use $key.content reference)"
             }
         }
-    },
+    }
 }
 
 class OllamaClient:
@@ -512,6 +512,7 @@ Common field references:
 - $key.response: LLM response from ask_llm
 - $key.result: Success/failure status
 
+Use list_storage tool to see all available keys and their fields.
 Do NOT generate large content in arguments - always use $key references!
 
 Language guideline:
@@ -798,16 +799,50 @@ class AgentGUI:
         chat_frame = ttk.LabelFrame(self.root, text="💬 Conversation", padding=10)
         chat_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # 채팅 디스플레이
+        # PanedWindow로 채팅과 스토리지 뷰 분리
+        paned = ttk.PanedWindow(chat_frame, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        # 왼쪽: 채팅 디스플레이
+        chat_container = ttk.Frame(paned)
+        paned.add(chat_container, weight=3)
+
         self.chat_display = scrolledtext.ScrolledText(
-            chat_frame,
+            chat_container,
             wrap=tk.WORD,
-            width=100,
+            width=70,
             height=30,
             font=("Consolas", 10),
             state=tk.DISABLED
         )
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+
+        # 오른쪽: Storage TreeView
+        storage_container = ttk.LabelFrame(paned, text="📦 Storage", padding=5)
+        paned.add(storage_container, weight=1)
+
+        # TreeView 생성
+        self.storage_tree = ttk.Treeview(storage_container, show="tree headings", columns=("value",))
+        self.storage_tree.heading("#0", text="Key", anchor=tk.W)
+        self.storage_tree.heading("value", text="Value", anchor=tk.W)
+        self.storage_tree.column("#0", width=120, minwidth=80)
+        self.storage_tree.column("value", width=200, minwidth=100)
+
+        # 스크롤바
+        tree_scroll_y = ttk.Scrollbar(storage_container, orient=tk.VERTICAL, command=self.storage_tree.yview)
+        tree_scroll_x = ttk.Scrollbar(storage_container, orient=tk.HORIZONTAL, command=self.storage_tree.xview)
+        self.storage_tree.configure(yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set)
+
+        # 배치
+        self.storage_tree.grid(row=0, column=0, sticky="nsew")
+        tree_scroll_y.grid(row=0, column=1, sticky="ns")
+        tree_scroll_x.grid(row=1, column=0, sticky="ew")
+        storage_container.grid_rowconfigure(0, weight=1)
+        storage_container.grid_columnconfigure(0, weight=1)
+
+        # Refresh 버튼
+        refresh_storage_btn = ttk.Button(storage_container, text="🔄 Refresh", command=self.refresh_storage_tree)
+        refresh_storage_btn.grid(row=2, column=0, columnspan=2, pady=5, sticky="ew")
 
         # 태그 설정
         self.chat_display.tag_config("user", foreground="#2196F3", font=("Consolas", 10, "bold"))
@@ -841,6 +876,39 @@ class AgentGUI:
 
         tools_text = "  •  ".join([f"{name}" for name in TOOLS.keys()])
         ttk.Label(tools_frame, text=tools_text, font=("Consolas", 9)).pack()
+
+    def refresh_storage_tree(self):
+        """Storage TreeView 갱신"""
+        # 기존 항목 삭제
+        for item in self.storage_tree.get_children():
+            self.storage_tree.delete(item)
+
+        # TOOL_RESULT_STORAGE 내용 추가
+        for key, value in TOOL_RESULT_STORAGE.items():
+            # 최상위 키 추가
+            parent_id = self.storage_tree.insert("", tk.END, text=f"${key}", open=True)
+
+            if isinstance(value, dict):
+                for field, field_value in value.items():
+                    # 값 포맷팅
+                    display_value = self._format_tree_value(field_value)
+                    self.storage_tree.insert(parent_id, tk.END, text=field, values=(display_value,))
+            else:
+                display_value = self._format_tree_value(value)
+                self.storage_tree.insert(parent_id, tk.END, text="(value)", values=(display_value,))
+
+    def _format_tree_value(self, value: Any) -> str:
+        """TreeView에 표시할 값 포맷팅"""
+        if isinstance(value, str):
+            if len(value) > 50:
+                return f"<{len(value)} chars>"
+            return value
+        elif isinstance(value, list):
+            return f"[{len(value)} items]"
+        elif isinstance(value, dict):
+            return f"{{{len(value)} fields}}"
+        else:
+            return str(value)
 
     def append_text(self, text: str, tag: str = None):
         """텍스트 추가 (thread-safe)"""
@@ -969,6 +1037,8 @@ Do you want to proceed?"""
                 # 상태 콜백
                 def status_cb(status):
                     self.append_text(f"\n[{status}]\n", "system")
+                    # Storage 갱신
+                    self.root.after(0, self.refresh_storage_tree)
 
                 # ⭐ 확인 콜백 (메인 스레드에서 실행)
                 def confirm_cb(tool_name, arguments):
@@ -1016,6 +1086,9 @@ Do you want to proceed?"""
         self.chat_display.config(state=tk.NORMAL)
         self.chat_display.delete("1.0", tk.END)
         self.chat_display.config(state=tk.DISABLED)
+
+        # Storage TreeView 초기화
+        self.refresh_storage_tree()
 
         self.append_text("[System] Chat reset! 🔄\n\n", "system")
 
