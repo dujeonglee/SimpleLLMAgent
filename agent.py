@@ -42,10 +42,6 @@ def store_tool_result(key: str, data: Any) -> None:
     global TOOL_RESULT_STORAGE
     TOOL_RESULT_STORAGE[key] = data
 
-def get_tool_result(key: str) -> Any:
-    """저장된 Tool 결과 가져오기"""
-    return TOOL_RESULT_STORAGE.get(key)
-
 def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     인자에서 $key 참조를 실제 값으로 치환
@@ -89,26 +85,16 @@ def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     return resolved
 
-def list_stored_keys() -> Dict[str, List[str]]:
-    """저장된 모든 키 목록 반환"""
-    result = {
-        "tool_results": list(TOOL_RESULT_STORAGE.keys()),
+def make_return_object(data: Dict[str, Any]) -> Dict[str, Any]:
+    base = {
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "created_by": sys._getframe(1).f_code.co_name  # 호출한 함수 이름
     }
-    return result
+    return {**base, **data}
 
 # ============================================================================
 # 도구 정의
 # ============================================================================
-
-def get_current_time() -> Dict[str, str]:
-    """현재 시간"""
-    now = datetime.now()
-    return {
-        "result": "success",
-        "current_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "current_week": now.strftime("%W"),
-        "day_of_week": now.strftime("%A")
-    }
 
 def get_file(base_dir: str = ".", pattern: str = "*") -> Dict[str, Any]:
     """
@@ -119,13 +105,11 @@ def get_file(base_dir: str = ".", pattern: str = "*") -> Dict[str, Any]:
 
         # 디렉토리가 존재하는지 확인
         if not base_path.exists():
-            return {
-                "base_dir": base_dir,
-                "files": [],
-                "count": 0,
+            return make_return_object({
                 "result": "failure",
+                "base_dir": str(base_path),
                 "error": f"Directory '{base_dir}' does not exist"
-            }
+            })
 
         # 재귀적으로 모든 파일 찾기
         if pattern == "*":
@@ -140,24 +124,20 @@ def get_file(base_dir: str = ".", pattern: str = "*") -> Dict[str, Any]:
                 for f in base_path.rglob(pattern)
                 if f.is_file()
             ]
-        
-        result = {
+
+        return make_return_object({
+            "result": "success",
             "base_dir": str(base_path),
             "files": sorted(all_files),
-            "count": len(all_files),
-            "result": "success"
-        }
-
-        return result
+            "count": len(all_files)
+        })
 
     except Exception as e:
-        return {
-            "base_dir": base_dir,
-            "files": [],
-            "count": 0,
+        return make_return_object({
             "result": "failure",
+            "base_dir": str(base_path),
             "error": str(e)
-        }
+        })
 
 def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     """
@@ -166,55 +146,30 @@ def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
     try:
         # 파일 존재 확인
         if not os.path.exists(file_path):
-            return {
-                "filename": file_path,
-                "content": None,
+            make_return_object({
                 "result": "failure",
+                "filename": file_path,
                 "error": f"File '{file_path}' does not exist"
-            }
+            })
         
         with open(file_path, 'r', encoding=encoding) as f:
             content = f.read()
 
         file_size = os.path.getsize(file_path)
 
-        result = {
+        return make_return_object({
+            "result": "success",
             "filename": file_path,
             "content": content,
-            "size": file_size,
-            "lines": len(content.splitlines()),
-            "result": "success"
-        }
+            "size": file_size
+        })
 
-        return result
-
-    except UnicodeDecodeError:
-        # 바이너리 파일 처리
-        try:
-            with open(file_path, 'rb') as f:
-                binary_content = f.read()
-
-            return {
-                "filename": file_path,
-                "content": f"<binary file, {len(binary_content)} bytes>",
-                "size": len(binary_content),
-                "result": "success",
-                "note": "Binary file, content not displayed"
-            }
-        except Exception as e:
-            return {
-                "filename": file_path,
-                "content": None,
-                "result": "failure",
-                "error": str(e)
-            }
     except Exception as e:
-        return {
-            "filename": file_path,
-            "content": None,
+        return make_return_object({
             "result": "failure",
+            "filename": file_path,
             "error": str(e)
-        }
+        })
 
 def write_file(file_path: str, content: object) -> Dict[str, Any]:
     """
@@ -234,43 +189,41 @@ def write_file(file_path: str, content: object) -> Dict[str, Any]:
 
         file_size = os.path.getsize(file_path)
 
-        result = {
+        return make_return_object({
+            "result": "success",
             "filename": file_path,
-            "size": file_size,
-            "result": "success"
-        }
-
-        return result
+            "size": file_size
+        })
 
     except Exception as e:
-        return {
-            "filename": file_path,
+        return make_return_object({
             "result": "failure",
+            "filename": file_path,
             "error": str(e)
-        }
+        })
 
 def delete_file(file_path: str) -> Dict[str, Any]:
     """Deletes a file."""
     try:
         if not os.path.exists(file_path):
-            return {
-                "filename": file_path,
+            return make_return_object({
                 "result": "failure",
+                "filename": file_path,
                 "error": f"File '{file_path}' does not exist"
-            }
+            })
 
         os.remove(file_path)
-        return {
-                "filename": file_path,
+        return make_return_object({
                 "result": "success",
-        }
+                "filename": file_path
+        })
 
     except Exception as e:
-        return {
-            "filename": file_path,
+        return make_return_object({
             "result": "failure",
+            "filename": file_path,
             "error": str(e)
-        }
+        })
 
 def ask_llm(query: str, context: str = "") -> Dict[str, Any]:
     """
@@ -285,10 +238,10 @@ def ask_llm(query: str, context: str = "") -> Dict[str, Any]:
 
     try:
         if _OLLAMA_CLIENT is None or _CURRENT_MODEL is None:
-            return {
+            return make_return_object({
                 "result": "failure",
                 "error": "LLM client not initialized. Please connect first."
-            }
+            })
 
         # 메시지 구성
         if context:
@@ -315,53 +268,19 @@ Please provide a detailed and helpful response."""
             callback=None  # 스트리밍 없이 전체 응답 받기
         )
 
-        return {
+        return make_return_object({
             "result": "success",
             "response": response,
             "response_length": len(response),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+        })
 
     except Exception as e:
-        return {
+        return make_return_object({
             "result": "failure",
             "error": str(e)
-        }
-
-def list_storage() -> Dict[str, Any]:
-    """
-    모든 저장소의 키 목록과 간단한 정보를 반환하는 함수.
-    """
-    tool_info = {}
-    for key, value in TOOL_RESULT_STORAGE.items():
-        if isinstance(value, dict):
-            tool_info[key] = {
-                "type": "dict",
-                "fields": list(value.keys())
-            }
-        elif isinstance(value, str):
-            tool_info[key] = {
-                "type": "string",
-                "length": len(value),
-                "preview": value[:100] + "..." if len(value) > 100 else value
-            }
-        else:
-            tool_info[key] = {
-                "type": type(value).__name__
-            }
-
-    return {
-        "result": "success",
-        "tool_results": tool_info,
-        "tool_result_count": len(TOOL_RESULT_STORAGE),
-    }
+        })
 
 TOOLS = {
-    "get_current_time": {
-        "function": get_current_time,
-        "description": "Get current date and time",
-        "parameters": {}
-    },
     "get_file": {
         "function": get_file,
         "description": "Recursively get all files in a directory with relative paths",
@@ -441,11 +360,6 @@ TOOLS = {
             }
         }
     },
-    "list_storage": {
-        "function": list_storage,
-        "description": "List all stored keys in tool_results storage. Use to see available $key references.",
-        "parameters": {}
-    }
 }
 
 class OllamaClient:
@@ -598,7 +512,6 @@ Common field references:
 - $key.response: LLM response from ask_llm
 - $key.result: Success/failure status
 
-Use list_storage tool to see all available keys and their fields.
 Do NOT generate large content in arguments - always use $key references!
 
 Language guideline:
