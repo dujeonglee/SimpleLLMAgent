@@ -25,7 +25,7 @@ except ImportError:
 # ============================================================================
 # 전역 변수 - 저장소
 # ============================================================================
-
+# 전역 변수로서, 도구 실행 결과를 저장하는 딕셔너리입니다.
 TOOL_RESULT_STORAGE: Dict[str, Any] = {}
 
 # LLM 클라이언트 참조 (ask_llm에서 사용)
@@ -452,16 +452,13 @@ class OllamaAgentJsonMode:
         global _OLLAMA_CLIENT, _AGENT_MODEL, _AGENT_MAX_TOKENS
         global _ASK_LLM_MODEL, _ASK_LLM_MAX_TOKENS
 
-        self.ollama = OllamaClient(ollama_url)
-        self.model = agent_model
-        self.max_tokens = agent_max_tokens
-        self.conversation_history = []
-
-        _OLLAMA_CLIENT = self.ollama
+        _OLLAMA_CLIENT = OllamaClient(ollama_url)
         _AGENT_MODEL = agent_model
         _AGENT_MAX_TOKENS = agent_max_tokens
         _ASK_LLM_MODEL = ask_llm_model
         _ASK_LLM_MAX_TOKENS = ask_llm_max_tokens
+
+        self.conversation_history = []
 
     def update_settings(self, agent_model: str = None, agent_max_tokens: int = None,
                         ask_llm_model: str = None, ask_llm_max_tokens: int = None):
@@ -469,10 +466,8 @@ class OllamaAgentJsonMode:
         global _AGENT_MODEL, _AGENT_MAX_TOKENS, _ASK_LLM_MODEL, _ASK_LLM_MAX_TOKENS
         
         if agent_model:
-            self.model = agent_model
             _AGENT_MODEL = agent_model
         if agent_max_tokens:
-            self.max_tokens = agent_max_tokens
             _AGENT_MAX_TOKENS = agent_max_tokens
         if ask_llm_model:
             _ASK_LLM_MODEL = ask_llm_model
@@ -632,11 +627,11 @@ Example references:
             messages = [{"role": "system", "content": self._create_system_prompt()}] + self.conversation_history
 
             try:
-                response = self.ollama.chat_json_mode(
-                    model=self.model,
+                response = _OLLAMA_CLIENT.chat_json_mode(
+                    model= _AGENT_MODEL,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=self.max_tokens
+                    max_tokens=_AGENT_MAX_TOKENS
                 )
                 
                 if stream_callback:
@@ -744,7 +739,7 @@ class AgentGUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Agent V2 🤖 (JSON Mode)")
+        self.root.title("Agent 🤖")
         self.root.geometry("1200x900")
 
         self.agent = None
