@@ -23,6 +23,121 @@ except ImportError:
     sys.exit(1)
 
 # ============================================================================
+# 통계 관리
+# ============================================================================
+
+class Statistics:
+    """Agent 사용 통계 수집"""
+    
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """통계 초기화"""
+        self.start_time = datetime.now()
+        self.total_messages = 0
+        self.user_messages = 0
+        self.assistant_messages = 0
+        self.tool_calls = {}  # {tool_name: count}
+        self.tool_successes = 0
+        self.tool_failures = 0
+        self.total_iterations = 0
+        self.storage_keys_created = 0
+    
+    def record_message(self, role: str):
+        """메시지 기록"""
+        self.total_messages += 1
+        if role == "user":
+            self.user_messages += 1
+        elif role == "assistant":
+            self.assistant_messages += 1
+    
+    def record_tool_call(self, tool_name: str, success: bool):
+        """도구 호출 기록"""
+        if tool_name not in self.tool_calls:
+            self.tool_calls[tool_name] = 0
+        self.tool_calls[tool_name] += 1
+        
+        if success:
+            self.tool_successes += 1
+        else:
+            self.tool_failures += 1
+    
+    def record_iteration(self):
+        """반복 횟수 기록"""
+        self.total_iterations += 1
+    
+    def record_storage_key(self):
+        """저장소 키 생성 기록"""
+        self.storage_keys_created += 1
+    
+    def get_uptime(self) -> str:
+        """가동 시간 반환"""
+        delta = datetime.now() - self.start_time
+        hours, remainder = divmod(int(delta.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """통계 요약 반환"""
+        return {
+            "uptime": self.get_uptime(),
+            "total_messages": self.total_messages,
+            "user_messages": self.user_messages,
+            "assistant_messages": self.assistant_messages,
+            "tool_calls": dict(self.tool_calls),
+            "tool_successes": self.tool_successes,
+            "tool_failures": self.tool_failures,
+            "total_iterations": self.total_iterations,
+            "storage_keys": self.storage_keys_created
+        }
+
+
+# ============================================================================
+# Config 관리
+# ============================================================================
+
+class ConfigManager:
+    """설정 저장/불러오기 관리"""
+    
+    def __init__(self, config_file: str = "agent_config.json"):
+        self.config_file = config_file
+        self.default_config = {
+            "ollama_url": "http://192.168.0.30:11434",
+            "agent_model": "",
+            "agent_max_tokens": 4000,
+            "ask_llm_model": "",
+            "ask_llm_max_tokens": 4000,
+            "confirm_tool_execution": True,
+            "window_geometry": "1200x900"
+        }
+    
+    def load_config(self) -> Dict[str, Any]:
+        """설정 파일 로드"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    # 기본값과 병합 (누락된 키 대비)
+                    return {**self.default_config, **config}
+            else:
+                return self.default_config.copy()
+        except Exception as e:
+            print(f"Config load error: {e}")
+            return self.default_config.copy()
+    
+    def save_config(self, config: Dict[str, Any]) -> bool:
+        """설정 파일 저장"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            print(f"Config save error: {e}")
+            return False
+
+
+# ============================================================================
 # 전역 변수 - 저장소
 # ============================================================================
 # 전역 변수로서, 도구 실행 결과를 저장하는 딕셔너리입니다.
@@ -616,13 +731,22 @@ Example references:
              stream_callback: Callable[[str], None] = None,
              status_callback: Callable[[str], None] = None,
              confirm_callback: Callable[[str, Dict], bool] = None,
-             max_iterations: int = 10) -> str:
+             max_iterations: int = 10,
+             stats_callback: Callable[[str, str, bool], None] = None) -> str:
         """⭐ JSON Mode Agent 메인 루프"""
         self.conversation_history.append({"role": "user", "content": user_message})
+        
+        # 통계 기록
+        if stats_callback:
+            stats_callback("message", "user", True)
 
         for iteration in range(max_iterations):
             if status_callback:
                 status_callback(f"🔄 Iteration {iteration + 1}")
+            
+            # 통계 기록
+            if stats_callback:
+                stats_callback("iteration", "", True)
 
             messages = [{"role": "system", "content": self._create_system_prompt()}] + self.conversation_history
 
@@ -642,6 +766,11 @@ Example references:
                 if response_type == "response":
                     content = response.get("content", "")
                     self.conversation_history.append({"role": "assistant", "content": json.dumps(response, ensure_ascii=False)})
+                    
+                    # 통계 기록
+                    if stats_callback:
+                        stats_callback("message", "assistant", True)
+                    
                     if status_callback:
                         status_callback("✅ Complete")
                     return content
@@ -649,6 +778,11 @@ Example references:
                 elif response_type == "clarification":
                     question = response.get("question", "무엇을 도와드릴까요?")
                     self.conversation_history.append({"role": "assistant", "content": json.dumps(response, ensure_ascii=False)})
+                    
+                    # 통계 기록
+                    if stats_callback:
+                        stats_callback("message", "assistant", True)
+                    
                     if status_callback:
                         status_callback("❓ Clarification needed")
                     return f"질문: {question}"
@@ -668,15 +802,30 @@ Example references:
                         if not confirm_callback(tool_name, arguments):
                             if status_callback:
                                 status_callback("❌ Tool execution cancelled")
+                            
+                            # 통계 기록 (실패)
+                            if stats_callback:
+                                stats_callback("tool", tool_name, False)
+                            
                             return "Tool execution was cancelled by user."
 
                     if status_callback:
                         status_callback(f"🔧 Executing: {tool_name}")
 
                     tool_result = self._execute_tool(tool_name, arguments)
+                    
+                    # 통계 기록
+                    success = tool_result.get("result") == "success"
+                    if stats_callback:
+                        stats_callback("tool", tool_name, success)
 
-                    if store_as and tool_result.get("result") == "success":
+                    if store_as and success:
                         store_tool_result(store_as, tool_result)
+                        
+                        # 통계 기록
+                        if stats_callback:
+                            stats_callback("storage", store_as, True)
+                        
                         if status_callback:
                             status_callback(f"💾 Stored as: ${store_as}")
 
@@ -740,14 +889,26 @@ class AgentGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Agent 🤖")
-        self.root.geometry("1200x900")
-
+        
         self.agent = None
         self.processing = False
         self.confirm_tool_execution = tk.BooleanVar(value=True)
         self.available_models = []
+        
+        # Config Manager
+        self.config_manager = ConfigManager()
+        self.config = self.config_manager.load_config()
+        
+        # Statistics
+        self.stats = Statistics()
+        
+        # 윈도우 크기 복원
+        self.root.geometry(self.config.get("window_geometry", "1200x900"))
 
         self.setup_ui()
+        
+        # 설정 적용
+        self.apply_config()
 
     def setup_ui(self):
         """UI 구성"""
@@ -807,9 +968,15 @@ class AgentGUI:
         self.settings_label = ttk.Label(model_frame, text="", font=("Consolas", 8), foreground="gray")
         self.settings_label.grid(row=2, column=0, columnspan=4, padx=5, pady=(10,0), sticky=tk.W)
 
-        # 옵션
-        confirm_check = ttk.Checkbutton(model_frame, text="Tool 실행 전 확인", variable=self.confirm_tool_execution)
-        confirm_check.grid(row=2, column=4, padx=10, pady=(10,0), sticky=tk.E)
+        # 옵션 및 설정 버튼
+        options_frame = ttk.Frame(model_frame)
+        options_frame.grid(row=2, column=0, columnspan=5, pady=(10,0), sticky=tk.EW)
+        
+        confirm_check = ttk.Checkbutton(options_frame, text="Tool 실행 전 확인", variable=self.confirm_tool_execution)
+        confirm_check.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(options_frame, text="💾 Save Config", command=self.save_config).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(options_frame, text="📂 Load Config", command=self.load_config).pack(side=tk.RIGHT, padx=2)
 
         # ===== 메인 영역 - Notebook 탭 =====
         main_notebook = ttk.Notebook(self.root)
@@ -879,6 +1046,67 @@ class AgentGUI:
         # ===== Tab 3: Storage =====
         storage_tab = ttk.Frame(main_notebook)
         main_notebook.add(storage_tab, text="📦 Storage")
+
+        # ===== Tab 4: Debug Log =====
+        debug_tab = ttk.Frame(main_notebook)
+        main_notebook.add(debug_tab, text="🐛 Debug Log")
+
+        # ===== Tab 5: Statistics =====
+        stats_tab = ttk.Frame(main_notebook)
+        main_notebook.add(stats_tab, text="📊 Statistics")
+
+        # Statistics 툴바
+        stats_toolbar = ttk.Frame(stats_tab)
+        stats_toolbar.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(stats_toolbar, text="Usage Statistics", font=("", 12, "bold")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(stats_toolbar, text="🔄 Refresh", command=self.refresh_statistics).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(stats_toolbar, text="🗑️ Reset Stats", command=self.reset_statistics).pack(side=tk.RIGHT, padx=5)
+
+        # Statistics 표시 영역 (2열 레이아웃)
+        stats_container = ttk.Frame(stats_tab)
+        stats_container.pack(fill=tk.BOTH, expand=True, padx=10)
+
+        # 왼쪽 열: 기본 통계
+        left_frame = ttk.LabelFrame(stats_container, text="📈 General Stats", padding=10)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        self.stats_general = scrolledtext.ScrolledText(left_frame, wrap=tk.WORD, height=20, font=("Consolas", 10), state=tk.DISABLED)
+        self.stats_general.pack(fill=tk.BOTH, expand=True)
+
+        # 오른쪽 열: 도구 사용 통계
+        right_frame = ttk.LabelFrame(stats_container, text="🔧 Tool Usage", padding=10)
+        right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        self.stats_tools = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, height=20, font=("Consolas", 10), state=tk.DISABLED)
+        self.stats_tools.pack(fill=tk.BOTH, expand=True)
+
+        # Debug 툴바
+        debug_toolbar = ttk.Frame(debug_tab)
+        debug_toolbar.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(debug_toolbar, text="Execution Log:", font=("", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        self.debug_count_label = ttk.Label(debug_toolbar, text="(0 entries)", foreground="gray")
+        self.debug_count_label.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(debug_toolbar, text="🗑️ Clear Log", command=self.clear_debug_log).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(debug_toolbar, text="💾 Export Log", command=self.export_debug_log).pack(side=tk.RIGHT, padx=5)
+
+        # Debug Log 표시 영역
+        self.debug_log = scrolledtext.ScrolledText(debug_tab, wrap=tk.WORD, font=("Consolas", 9))
+        self.debug_log.pack(fill=tk.BOTH, expand=True)
+
+        # Debug 로그 태그 설정
+        self.debug_log.tag_config("timestamp", foreground="#666666", font=("Consolas", 8))
+        self.debug_log.tag_config("info", foreground="#2196F3")
+        self.debug_log.tag_config("success", foreground="#4CAF50")
+        self.debug_log.tag_config("warning", foreground="#FF9800")
+        self.debug_log.tag_config("error", foreground="#F44336")
+        self.debug_log.tag_config("tool", foreground="#9C27B0", font=("Consolas", 9, "bold"))
+
+        # Debug log 엔트리 카운터
+        self.debug_log_count = 0
 
         # Storage TreeView + 상세정보 (기존 코드 이동)
         storage_paned = ttk.PanedWindow(storage_tab, orient=tk.HORIZONTAL)
@@ -983,6 +1211,171 @@ class AgentGUI:
 
         tools_text = "  •  ".join([f"{name}" for name in TOOLS.keys()])
         ttk.Label(tools_frame, text=tools_text, font=("Consolas", 9)).pack()
+
+    def refresh_statistics(self):
+        """통계 표시 갱신"""
+        summary = self.stats.get_summary()
+        
+        # 일반 통계
+        self.stats_general.config(state=tk.NORMAL)
+        self.stats_general.delete("1.0", tk.END)
+        
+        general_text = f"""
+⏱️  Uptime: {summary['uptime']}
+
+💬 Messages:
+   Total: {summary['total_messages']}
+   User: {summary['user_messages']}
+   Assistant: {summary['assistant_messages']}
+
+🔄 Iterations: {summary['total_iterations']}
+
+💾 Storage Keys Created: {summary['storage_keys']}
+
+🔧 Tool Execution:
+   Successes: {summary['tool_successes']}
+   Failures: {summary['tool_failures']}
+   Total: {summary['tool_successes'] + summary['tool_failures']}
+"""
+        
+        if summary['tool_successes'] + summary['tool_failures'] > 0:
+            success_rate = (summary['tool_successes'] / (summary['tool_successes'] + summary['tool_failures'])) * 100
+            general_text += f"   Success Rate: {success_rate:.1f}%\n"
+        
+        self.stats_general.insert("1.0", general_text)
+        self.stats_general.config(state=tk.DISABLED)
+        
+        # 도구 사용 통계
+        self.stats_tools.config(state=tk.NORMAL)
+        self.stats_tools.delete("1.0", tk.END)
+        
+        if summary['tool_calls']:
+            tools_text = "Tool Call Count:\n\n"
+            sorted_tools = sorted(summary['tool_calls'].items(), key=lambda x: x[1], reverse=True)
+            
+            max_count = max(summary['tool_calls'].values())
+            for tool_name, count in sorted_tools:
+                # 간단한 바 차트
+                bar_length = int((count / max_count) * 30)
+                bar = "█" * bar_length
+                tools_text += f"{tool_name:20} {count:3}  {bar}\n"
+            
+            self.stats_tools.insert("1.0", tools_text)
+        else:
+            self.stats_tools.insert("1.0", "No tool calls recorded yet")
+        
+        self.stats_tools.config(state=tk.DISABLED)
+
+    def reset_statistics(self):
+        """통계 초기화"""
+        if messagebox.askyesno("Confirm Reset", "Reset all statistics?"):
+            self.stats.reset()
+            self.refresh_statistics()
+            self.log_debug("Statistics reset", "info")
+
+    def log_debug(self, message: str, level: str = "info"):
+        """
+        Debug 로그에 메시지 추가
+        level: info, success, warning, error, tool
+        """
+        def _log():
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            
+            self.debug_log.config(state=tk.NORMAL)
+            self.debug_log.insert(tk.END, f"[{timestamp}] ", "timestamp")
+            
+            # Level 표시
+            level_map = {
+                "info": ("ℹ️ INFO", "info"),
+                "success": ("✅ SUCCESS", "success"),
+                "warning": ("⚠️ WARNING", "warning"),
+                "error": ("❌ ERROR", "error"),
+                "tool": ("🔧 TOOL", "tool")
+            }
+            
+            level_text, level_tag = level_map.get(level, ("INFO", "info"))
+            self.debug_log.insert(tk.END, f"{level_text}: ", level_tag)
+            self.debug_log.insert(tk.END, f"{message}\n")
+            
+            self.debug_log.see(tk.END)
+            self.debug_log.config(state=tk.DISABLED)
+            
+            self.debug_log_count += 1
+            self.debug_count_label.config(text=f"({self.debug_log_count} entries)")
+        
+        self.root.after(0, _log)
+
+    def clear_debug_log(self):
+        """Debug 로그 초기화"""
+        self.debug_log.config(state=tk.NORMAL)
+        self.debug_log.delete("1.0", tk.END)
+        self.debug_log.config(state=tk.DISABLED)
+        self.debug_log_count = 0
+        self.debug_count_label.config(text="(0 entries)")
+        self.log_debug("Debug log cleared", "info")
+
+    def export_debug_log(self):
+        """Debug 로그를 파일로 내보내기"""
+        try:
+            log_content = self.debug_log.get("1.0", tk.END)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"debug_log_{timestamp}.txt"
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(log_content)
+            
+            messagebox.showinfo("Success", f"Debug log exported to:\n{filename}")
+            self.log_debug(f"Log exported to {filename}", "success")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export log:\n{str(e)}")
+            self.log_debug(f"Export failed: {str(e)}", "error")
+
+    def apply_config(self):
+        """저장된 설정 적용"""
+        self.url_entry.delete(0, tk.END)
+        self.url_entry.insert(0, self.config.get("ollama_url", "http://192.168.0.30:11434"))
+        
+        self.agent_tokens_var.set(self.config.get("agent_max_tokens", 4000))
+        self.ask_llm_tokens_var.set(self.config.get("ask_llm_max_tokens", 4000))
+        self.confirm_tool_execution.set(self.config.get("confirm_tool_execution", True))
+        
+        # 모델은 연결 후 설정됨
+        self.append_text("[System] Config loaded from agent_config.json\n", "system")
+
+    def save_config(self):
+        """현재 설정을 config.json에 저장"""
+        try:
+            # 현재 윈도우 크기 저장
+            geometry = self.root.geometry()
+            
+            config = {
+                "ollama_url": self.url_entry.get(),
+                "agent_model": self.agent_model_var.get(),
+                "agent_max_tokens": self.agent_tokens_var.get(),
+                "ask_llm_model": self.ask_llm_model_var.get(),
+                "ask_llm_max_tokens": self.ask_llm_tokens_var.get(),
+                "confirm_tool_execution": self.confirm_tool_execution.get(),
+                "window_geometry": geometry
+            }
+            
+            if self.config_manager.save_config(config):
+                self.config = config
+                self.append_text("[System] 💾 Config saved to agent_config.json\n", "system")
+                messagebox.showinfo("Success", "Configuration saved successfully!")
+            else:
+                messagebox.showerror("Error", "Failed to save configuration")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save config:\n{str(e)}")
+
+    def load_config(self):
+        """config.json에서 설정 불러오기"""
+        try:
+            self.config = self.config_manager.load_config()
+            self.apply_config()
+            self._update_settings_label()
+            messagebox.showinfo("Success", "Configuration loaded successfully!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load config:\n{str(e)}")
 
     def _update_settings_label(self):
         """현재 설정 레이블 업데이트"""
@@ -1445,6 +1838,7 @@ Arguments:
     def connect(self):
         def _connect():
             try:
+                self.log_debug(f"Connecting to {self.url_entry.get()}...", "info")
                 url = urllib.parse.urljoin(self.url_entry.get(), "/api/tags")
                 with urllib.request.urlopen(url, timeout=10) as response:
                     data = json.load(response)
@@ -1454,21 +1848,36 @@ Arguments:
                     self.available_models = models
                     self.agent_model_combo["values"] = models
                     self.ask_llm_model_combo["values"] = models
-                    if models:
+                    
+                    # 저장된 설정이 있으면 적용, 없으면 첫 번째 모델 선택
+                    saved_agent_model = self.config.get("agent_model", "")
+                    saved_ask_llm_model = self.config.get("ask_llm_model", "")
+                    
+                    if saved_agent_model in models:
+                        self.agent_model_combo.set(saved_agent_model)
+                    elif models:
                         self.agent_model_combo.set(models[0])
+                    
+                    if saved_ask_llm_model in models:
+                        self.ask_llm_model_combo.set(saved_ask_llm_model)
+                    elif models:
                         self.ask_llm_model_combo.set(models[0])
+                    
                     self._create_agent()
                     self.set_status("● Connected", "green")
                     self.append_text(f"[System] Connected to {self.url_entry.get()}\n", "system")
                     self.append_text(f"[System] Models: {', '.join(models)}\n", "system")
                     self.send_btn.config(state=tk.NORMAL)
                     self.reset_btn.config(state=tk.NORMAL)
+                    
+                    self.log_debug(f"Connected successfully. Found {len(models)} models", "success")
                 self.root.after(0, _update_ui)
 
             except Exception as e:
                 def _show_error():
                     self.set_status("● Connection failed", "red")
                     self.append_text(f"[System] ❌ Connection failed: {str(e)}\n", "system")
+                    self.log_debug(f"Connection failed: {str(e)}", "error")
                 self.root.after(0, _show_error)
 
         threading.Thread(target=_connect, daemon=True).start()
@@ -1495,6 +1904,17 @@ Arguments:
                     self.append_text(f"\n[{status}]\n", "system")
                     self.root.after(0, self.refresh_storage_tree)
                     self.root.after(0, self.refresh_history)
+                    # Debug 로그 추가
+                    if "Executing:" in status:
+                        self.log_debug(status, "tool")
+                    elif "Error" in status or "❌" in status:
+                        self.log_debug(status, "error")
+                    elif "Complete" in status or "✅" in status:
+                        self.log_debug(status, "success")
+                    elif "Warning" in status or "⚠️" in status:
+                        self.log_debug(status, "warning")
+                    else:
+                        self.log_debug(status, "info")
                 def confirm_cb(tool_name, arguments):
                     result_container = [None]
                     event = threading.Event()
@@ -1503,13 +1923,38 @@ Arguments:
                         event.set()
                     self.root.after(0, _ask)
                     event.wait()
+                    
+                    # Debug 로그
+                    if result_container[0]:
+                        self.log_debug(f"Tool '{tool_name}' confirmed by user", "info")
+                    else:
+                        self.log_debug(f"Tool '{tool_name}' cancelled by user", "warning")
+                    
                     return result_container[0]
 
-                self.agent.chat(user_input, stream_callback=stream_cb, status_callback=status_cb, confirm_callback=confirm_cb)
+                def stats_cb(event_type: str, detail: str, success: bool):
+                    """통계 수집 콜백"""
+                    if event_type == "message":
+                        self.stats.record_message(detail)
+                    elif event_type == "tool":
+                        self.stats.record_tool_call(detail, success)
+                    elif event_type == "iteration":
+                        self.stats.record_iteration()
+                    elif event_type == "storage":
+                        self.stats.record_storage_key()
+
+                self.log_debug(f"Starting chat with query: {user_input[:100]}...", "info")
+                self.agent.chat(user_input, stream_callback=stream_cb, status_callback=status_cb, 
+                               confirm_callback=confirm_cb, stats_callback=stats_cb)
                 self.append_text("\n\n" + "=" * 80 + "\n\n")
+                self.log_debug("Chat completed successfully", "success")
+                
+                # 통계 갱신
+                self.root.after(0, self.refresh_statistics)
 
             except Exception as e:
                 self.append_text(f"\n\n❌ Error: {str(e)}\n\n", "system")
+                self.log_debug(f"Chat error: {str(e)}", "error")
             finally:
                 self.processing = False
                 self.root.after(0, lambda: self.send_btn.config(state=tk.NORMAL))
@@ -1537,6 +1982,18 @@ def main():
     root = tk.Tk()
     app = AgentGUI(root)
     app.reset_chat()
+    
+    # 종료 시 자동으로 설정 저장
+    def on_closing():
+        try:
+            geometry = root.geometry()
+            app.config["window_geometry"] = geometry
+            app.config_manager.save_config(app.config)
+        except:
+            pass
+        root.destroy()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 
