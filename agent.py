@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """
 LLM Agent with Ollama - V2 (JSON Mode)
-
-개선 사항:
-1. JSON Mode를 기본으로 사용하여 파싱 안정성 향상
-2. 유연한 응답 구조 (tool_call, response, clarification)
-3. 향상된 에러 처리 및 재시도 로직
-4. 기존 $key.field 참조 시스템 유지
 """
 
 import os
@@ -20,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
 
-
 try:
     import tkinter as tk
     from tkinter import scrolledtext, ttk
@@ -28,7 +21,6 @@ except ImportError:
     print("Error: tkinter not installed")
     print("Run: sudo apt-get install python3-tk")
     sys.exit(1)
-
 
 # ============================================================================
 # 전역 변수 - 저장소
@@ -38,7 +30,13 @@ TOOL_RESULT_STORAGE: Dict[str, Any] = {}
 
 # LLM 클라이언트 참조 (ask_llm에서 사용)
 _OLLAMA_CLIENT: Optional['OllamaClient'] = None
-_CURRENT_MODEL: Optional[str] = None
+
+# 모델 설정 (Agent용, ask_llm용 분리)
+_AGENT_MODEL: Optional[str] = None
+_AGENT_MAX_TOKENS: int = 4000
+_ASK_LLM_MODEL: Optional[str] = None
+_ASK_LLM_MAX_TOKENS: int = 4000
+
 
 # ============================================================================
 # Tool 결과 저장소 관리 함수
@@ -48,7 +46,6 @@ def store_tool_result(key: str, data: Any) -> None:
     """Tool 실행 결과를 저장"""
     global TOOL_RESULT_STORAGE
     TOOL_RESULT_STORAGE[key] = data
-
 
 def resolve_references(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -86,78 +83,56 @@ def _resolve_string_references(text: str) -> Any:
     """
     import re
     
-    # $key 또는 $key.field 또는 $key.field[0] 패턴 매칭
-    # 단어 경계나 문자열 끝에서 끝나도록 함
     pattern = r'\$([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[\d+\])*)'
-
     matches = list(re.finditer(pattern, text))
 
     if not matches:
-        # 참조 없음 - 원본 반환
         return text
     
-    # 문자열 전체가 단일 참조인 경우 (앞뒤 공백 허용)
     if len(matches) == 1:
         match = matches[0]
         if text.strip() == match.group(0):
-            # 전체가 참조 → 원래 타입 유지 (dict, list 등)
             ref = match.group(1)
             return _resolve_single_reference(ref, match.group(0))
     
-    # 문자열 내에 참조가 포함된 경우 → 문자열로 치환
     result = text
-    # 뒤에서부터 치환해야 인덱스가 밀리지 않음
     for match in reversed(matches):
         ref = match.group(1)
         full_match = match.group(0)
         
         try:
             resolved_value = _resolve_single_reference(ref, full_match)
-            # 치환할 값을 문자열로 변환
             if isinstance(resolved_value, str):
                 replacement = resolved_value
             elif isinstance(resolved_value, (dict, list)):
-                import json
                 replacement = json.dumps(resolved_value, ensure_ascii=False)
             else:
                 replacement = str(resolved_value)
             
             result = result[:match.start()] + replacement + result[match.end():]
         except ValueError:
-            # 참조 해석 실패 시 원본 유지하지 않고 에러 발생
             raise
     
     return result
 
 def _resolve_single_reference(ref: str, original: str) -> Any:
-    """
-    단일 참조를 해석
-    
-    ref: "files_to_delete.files[0]" 형태
-    original: "$files_to_delete.files[0]" (에러 메시지용)
-    """
+    """단일 참조를 해석"""
     import re
     
-    # 첫 번째 부분 (storage key) 추출
     if "." in ref:
         key, rest = ref.split(".", 1)
     else:
         key = ref
         rest = None
     
-    # Storage에서 데이터 가져오기
     data = TOOL_RESULT_STORAGE.get(key)
     if data is None:
         raise ValueError(f"Reference '{original}' not found. Available keys: {list(TOOL_RESULT_STORAGE.keys())}")
     
-    # 추가 경로가 없으면 전체 반환
     if rest is None:
         return data
     
-    # 경로 파싱: "files[0].name" -> ["files", "[0]", "name"]
-    # 정규식으로 필드명과 인덱스를 분리
     tokens = re.findall(r'(\w+)|\[(\d+)\]', rest)
-    
     current = data
     path_so_far = f"${key}"
     
@@ -165,29 +140,20 @@ def _resolve_single_reference(ref: str, original: str) -> Any:
         field_name, index = token
         
         if field_name:
-            # 딕셔너리 필드 접근
             path_so_far += f".{field_name}"
-            
             if not isinstance(current, dict):
                 raise ValueError(f"Cannot access field '{field_name}' on non-dict type at '{path_so_far}'")
-            
             if field_name not in current:
                 available = list(current.keys()) if isinstance(current, dict) else 'N/A'
                 raise ValueError(f"Field '{field_name}' not found at '{path_so_far}'. Available fields: {available}")
-            
             current = current[field_name]
-        
         elif index:
-            # 배열 인덱스 접근
             idx = int(index)
             path_so_far += f"[{idx}]"
-            
             if not isinstance(current, (list, tuple)):
                 raise ValueError(f"Cannot use index [{idx}] on non-list type at '{path_so_far}'")
-            
             if idx < 0 or idx >= len(current):
                 raise ValueError(f"Index [{idx}] out of range at '{path_so_far}'. List has {len(current)} items (0-{len(current)-1})")
-            
             current = current[idx]
     
     return current
@@ -287,7 +253,6 @@ def write_file(file_path: str, content: object) -> Dict[str, Any]:
     """파일을 저장하는 함수."""
     try:
         dir_path = os.path.dirname(file_path)
-
         if dir_path and not os.path.exists(dir_path):
             os.makedirs(dir_path, exist_ok=True)
 
@@ -295,7 +260,6 @@ def write_file(file_path: str, content: object) -> Dict[str, Any]:
             f.write(str(content))
 
         file_size = os.path.getsize(file_path)
-
         return make_return_object({
             "result": "success",
             "filename": file_path,
@@ -335,11 +299,11 @@ def delete_file(file_path: str) -> Dict[str, Any]:
 
 
 def ask_llm(query: str, context: str = "") -> Dict[str, Any]:
-    """LLM에 쿼리를 보내고 결과를 반환하는 함수."""
-    global _OLLAMA_CLIENT, _CURRENT_MODEL
+    """LLM에 쿼리를 보내고 결과를 반환하는 함수. (chat_simple 사용)"""
+    global _OLLAMA_CLIENT, _ASK_LLM_MODEL, _ASK_LLM_MAX_TOKENS
 
     try:
-        if _OLLAMA_CLIENT is None or _CURRENT_MODEL is None:
+        if _OLLAMA_CLIENT is None or _ASK_LLM_MODEL is None:
             return make_return_object({
                 "result": "failure",
                 "error": "LLM client not initialized. Please connect first."
@@ -358,17 +322,19 @@ Please provide a detailed and helpful response."""
 
         messages = [{"role": "user", "content": full_prompt}]
 
-        # Non-streaming, no JSON mode (자유 형식 응답)
+        # ⭐ chat_simple 사용 - 별도 모델/토큰 설정
         response = _OLLAMA_CLIENT.chat_simple(
-            model=_CURRENT_MODEL,
+            model=_ASK_LLM_MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=4000
+            max_tokens=_ASK_LLM_MAX_TOKENS
         )
 
         return make_return_object({
             "result": "success",
-            "response": response
+            "response": response,
+            "model_used": _ASK_LLM_MODEL,
+            "max_tokens_used": _ASK_LLM_MAX_TOKENS
         })
 
     except Exception as e:
@@ -384,79 +350,39 @@ TOOLS = {
         "function": get_file,
         "description": "Recursively get all files in a directory with relative paths",
         "parameters": {
-            "base_dir": {
-                "type": "string",
-                "required": False,
-                "default": ".",
-                "description": "Base directory to search from (default: current directory)"
-            },
-            "pattern": {
-                "type": "string",
-                "required": False,
-                "default": "*",
-                "description": "File pattern to match (e.g., '*.c', '*.py', default: '*' for all files)"
-            }
+            "base_dir": {"type": "string", "required": False, "default": ".", "description": "Base directory to search from"},
+            "pattern": {"type": "string", "required": False, "default": "*", "description": "File pattern to match (e.g., '*.c', '*.py')"}
         }
     },
     "read_file": {
         "function": read_file,
         "description": "Read the contents of a file",
         "parameters": {
-            "file_path": {
-                "type": "string",
-                "required": True,
-                "description": "Path to the file to read"
-            },
-            "encoding": {
-                "type": "string",
-                "required": False,
-                "default": "utf-8",
-                "description": "File encoding (default: utf-8)"
-            }
+            "file_path": {"type": "string", "required": True, "description": "Path to the file to read"},
+            "encoding": {"type": "string", "required": False, "default": "utf-8", "description": "File encoding"}
         }
     },
     "write_file": {
         "function": write_file,
         "description": "Write content to a file",
         "parameters": {
-            "file_path": {
-                "type": "string",
-                "required": True,
-                "description": "Path where the file should be written"
-            },
-            "content": {
-                "type": "string",
-                "required": True,
-                "description": "Content to write to the file. Use $key.field reference for stored data"
-            }
+            "file_path": {"type": "string", "required": True, "description": "Path where the file should be written"},
+            "content": {"type": "string", "required": True, "description": "Content to write. Use $key.field reference for stored data"}
         }
     },
     "delete_file": {
         "function": delete_file,
         "description": "Delete a file",
         "parameters": {
-            "file_path": {
-                "type": "string",
-                "required": True,
-                "description": "Path to the file to delete"
-            }
+            "file_path": {"type": "string", "required": True, "description": "Path to the file to delete"}
         }
     },
     "ask_llm": {
         "function": ask_llm,
-        "description": "Send a query to LLM for analysis. Result is stored and accessible as $key.response",
+        "description": "Send a query to LLM for analysis (uses separate model settings). Result accessible as $key.response",
         "parameters": {
-            "query": {
-                "type": "string",
-                "required": True,
-                "description": "The question or request to send to LLM"
-            },
-            "context": {
-                "type": "string",
-                "required": False,
-                "default": "",
-                "description": "Additional context like file content (use $key.content reference)"
-            }
+            "query": {"type": "string", "required": True, "description": "The question or request to send to LLM"},
+            "context": {"type": "string", "required": False, "default": "", "description": "Additional context (use $key.content reference)"}
         }
     }
 }
@@ -485,65 +411,76 @@ class OllamaClient:
 
     def chat_simple(self, model: str, messages: List[Dict], 
                     temperature: float = 0.7, max_tokens: int = 4000) -> str:
-        """단순 채팅 (스트리밍 없음, JSON 모드 없음)"""
+        """단순 채팅 (스트리밍 없음, JSON 모드 없음) - ask_llm에서 사용"""
         payload = {
             "model": model,
             "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens
-            }
+            "options": {"temperature": temperature, "num_predict": max_tokens}
         }
         result = self._request("/api/chat", payload)
         return result["message"]["content"]
 
     def chat_json_mode(self, model: str, messages: List[Dict],
                        temperature: float = 0.7, max_tokens: int = 4000) -> dict:
-        """
-        ⭐ JSON Mode 채팅 - 항상 유효한 JSON 반환
-        """
+        """⭐ JSON Mode 채팅 - Agent에서 사용"""
         payload = {
             "model": model,
             "messages": messages,
             "stream": False,
-            "format": "json",  # ⭐ JSON 출력 강제
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens
-            }
+            "format": "json",
+            "options": {"temperature": temperature, "num_predict": max_tokens}
         }
         result = self._request("/api/chat", payload)
         content = result["message"]["content"]
         
-        # JSON 파싱 (format: json이므로 항상 유효해야 함)
         try:
             return json.loads(content)
         except json.JSONDecodeError as e:
-            # 만약의 경우 에러 처리
-            raise Exception(f"JSON parsing failed despite format:json - {e}\nContent: {content[:500]}")
+            raise Exception(f"JSON parsing failed: {e}\nContent: {content[:500]}")
+
 
 # ============================================================================
-# Agent - JSON Mode (기본)
+# Agent - JSON Mode
 # ============================================================================
 
 class OllamaAgentJsonMode:
-    """JSON Mode를 사용하는 Agent (권장)"""
+    """JSON Mode를 사용하는 Agent"""
 
-    def __init__(self, ollama_url: str, model: str):
-        global _OLLAMA_CLIENT, _CURRENT_MODEL
+    def __init__(self, ollama_url: str, agent_model: str, agent_max_tokens: int,
+                 ask_llm_model: str, ask_llm_max_tokens: int):
+        global _OLLAMA_CLIENT, _AGENT_MODEL, _AGENT_MAX_TOKENS
+        global _ASK_LLM_MODEL, _ASK_LLM_MAX_TOKENS
 
         self.ollama = OllamaClient(ollama_url)
-        self.model = model
+        self.model = agent_model
+        self.max_tokens = agent_max_tokens
         self.conversation_history = []
 
         _OLLAMA_CLIENT = self.ollama
-        _CURRENT_MODEL = self.model
+        _AGENT_MODEL = agent_model
+        _AGENT_MAX_TOKENS = agent_max_tokens
+        _ASK_LLM_MODEL = ask_llm_model
+        _ASK_LLM_MAX_TOKENS = ask_llm_max_tokens
+
+    def update_settings(self, agent_model: str = None, agent_max_tokens: int = None,
+                        ask_llm_model: str = None, ask_llm_max_tokens: int = None):
+        """설정 업데이트"""
+        global _AGENT_MODEL, _AGENT_MAX_TOKENS, _ASK_LLM_MODEL, _ASK_LLM_MAX_TOKENS
+        
+        if agent_model:
+            self.model = agent_model
+            _AGENT_MODEL = agent_model
+        if agent_max_tokens:
+            self.max_tokens = agent_max_tokens
+            _AGENT_MAX_TOKENS = agent_max_tokens
+        if ask_llm_model:
+            _ASK_LLM_MODEL = ask_llm_model
+        if ask_llm_max_tokens:
+            _ASK_LLM_MAX_TOKENS = ask_llm_max_tokens
 
     def _create_system_prompt(self) -> str:
         """JSON Mode용 시스템 프롬프트"""
-        
-        # Tool 설명 생성
         tools_desc = []
         for name, info in TOOLS.items():
             params_desc = []
@@ -553,12 +490,9 @@ class OllamaAgentJsonMode:
                 if 'default' in param_info:
                     p_str += f" default={param_info['default']}"
                 params_desc.append(p_str)
-            
             tools_desc.append(f"- {name}: {info['description']}\n  Parameters: {', '.join(params_desc) if params_desc else 'none'}")
 
         tools_text = "\n".join(tools_desc)
-        
-        # 현재 저장소 상태
         storage_info = get_storage_summary()
 
         return f"""You are a WiFi driver development assistant.
@@ -573,7 +507,7 @@ RESPONSE TYPES (choose one):
     "tool": "tool_name",
     "arguments": {{"param": "value"}},
     "store_as": "key_name",
-    "reasoning": "brief explanation why this tool is needed"
+    "reasoning": "brief explanation"
 }}
 
 2. When you have a final answer:
@@ -595,64 +529,52 @@ REFERENCE SYSTEM:
 - Results are stored with the key in "store_as"
 - Use $key or $key.field in arguments to reference stored data
 - Use $key.field[index] to access array elements (0-based index)
-- Example: {{"file_path": "$file_list.files[0]"}} references first file from stored key "file_list"
+- Example: {{"file_path": "$file_list.files[0]"}}
 
 CURRENT STORAGE: {storage_info}
 
 IMPORTANT RULES:
 - All JSON keys and string values must use double quotes
 - Use $key.field references instead of embedding large content
-- Use $key.field[0], $key.field[1], etc. to access individual array items
 - Always provide "store_as" for tool calls to enable chaining
 - Respond in the same language as the user
 
-Example of field references:
+Example references:
 - $key.content: File content from read_file
-- $key.files: File list from get_file (array)
 - $key.files[0]: First file path from get_file
-- $key.files[1]: Second file path from get_file
-- $key.response: LLM response from ask_llm
-- $key.result: Success/failure status
-- $key.count: Number of items (from get_file)"""
+- $key.response: LLM response from ask_llm"""
 
     def _validate_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> Optional[str]:
-        """Tool call 유효성 검사. 에러 시 에러 메시지 반환, 성공 시 None"""
+        """Tool call 유효성 검사"""
         if tool_name not in TOOLS:
-            return f"Unknown tool: {tool_name}. Available tools: {list(TOOLS.keys())}"
+            return f"Unknown tool: {tool_name}. Available: {list(TOOLS.keys())}"
         
         tool_info = TOOLS[tool_name]
         params = tool_info["parameters"]
         
-        # Required 파라미터 검증
         for param_name, param_info in params.items():
             if param_info.get("required", False) and param_name not in arguments:
                 return f"Missing required parameter: '{param_name}' for tool '{tool_name}'"
         
-        # Unknown 파라미터 검증
         valid_params = set(params.keys())
         provided_params = set(arguments.keys())
         unknown = provided_params - valid_params
         if unknown:
-            return f"Unknown parameters: {unknown}. Valid parameters: {valid_params}"
+            return f"Unknown parameters: {unknown}. Valid: {valid_params}"
         
         return None
 
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Tool 실행"""
-        # 유효성 검사
         error = self._validate_tool_call(tool_name, arguments)
         if error:
             return {"result": "failure", "error": error}
         
         try:
-            # $key 참조 해결
             resolved_args = resolve_references(arguments)
-            
-            # 기본값 적용
             for param_name, param_info in TOOLS[tool_name]["parameters"].items():
                 if param_name not in resolved_args and "default" in param_info:
                     resolved_args[param_name] = param_info["default"]
-            
             return TOOLS[tool_name]["function"](**resolved_args)
         except ValueError as e:
             return {"result": "failure", "error": f"Reference error: {str(e)}"}
@@ -665,10 +587,8 @@ Example of field references:
             return str(result)[:200]
         
         summary_parts = []
-        
         if "result" in result:
             summary_parts.append(f"status: {result['result']}")
-        
         if "error" in result:
             summary_parts.append(f"error: {result['error']}")
             return "{" + ", ".join(summary_parts) + "}"
@@ -676,7 +596,6 @@ Example of field references:
         for key, value in result.items():
             if key in ["result", "error", "created_at", "created_by"]:
                 continue
-            
             if isinstance(value, str):
                 if len(value) > 100:
                     summary_parts.append(f"{key}: <{len(value)} chars>")
@@ -691,75 +610,54 @@ Example of field references:
                 summary_parts.append(f"{key}: {value}")
         
         summary = "{" + ", ".join(summary_parts) + "}"
-        
         if store_as:
             fields = [k for k in result.keys() if k not in ["result", "created_at", "created_by"]]
             summary += f"\n→ Stored as ${store_as}"
             if fields:
                 summary += f" (fields: {', '.join(fields[:5])})"
-        
         return summary
 
     def chat(self, user_message: str, 
              stream_callback: Callable[[str], None] = None,
              status_callback: Callable[[str], None] = None,
              confirm_callback: Callable[[str, Dict], bool] = None,
-             max_iterations: int = 10,
-             max_tokens: int = 4000) -> str:
-        """
-        ⭐ JSON Mode Agent 메인 루프
-        """
-        self.conversation_history.append({
-            "role": "user",
-            "content": user_message
-        })
+             max_iterations: int = 10) -> str:
+        """⭐ JSON Mode Agent 메인 루프"""
+        self.conversation_history.append({"role": "user", "content": user_message})
 
         for iteration in range(max_iterations):
             if status_callback:
                 status_callback(f"🔄 Iteration {iteration + 1}")
 
-            messages = [
-                {"role": "system", "content": self._create_system_prompt()}
-            ] + self.conversation_history
+            messages = [{"role": "system", "content": self._create_system_prompt()}] + self.conversation_history
 
             try:
-                # ⭐ JSON Mode 호출
                 response = self.ollama.chat_json_mode(
                     model=self.model,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=max_tokens
+                    max_tokens=self.max_tokens
                 )
                 
-                # 스트리밍 콜백으로 응답 표시
                 if stream_callback:
                     stream_callback(json.dumps(response, indent=2, ensure_ascii=False))
 
                 response_type = response.get("type", "unknown")
 
-                # ===== 최종 응답 =====
                 if response_type == "response":
                     content = response.get("content", "")
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": json.dumps(response, ensure_ascii=False)
-                    })
+                    self.conversation_history.append({"role": "assistant", "content": json.dumps(response, ensure_ascii=False)})
                     if status_callback:
                         status_callback("✅ Complete")
                     return content
 
-                # ===== 명확화 요청 =====
                 elif response_type == "clarification":
                     question = response.get("question", "무엇을 도와드릴까요?")
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": json.dumps(response, ensure_ascii=False)
-                    })
+                    self.conversation_history.append({"role": "assistant", "content": json.dumps(response, ensure_ascii=False)})
                     if status_callback:
                         status_callback("❓ Clarification needed")
                     return f"질문: {question}"
 
-                # ===== Tool 호출 =====
                 elif response_type == "tool_call":
                     tool_name = response.get("tool", "")
                     arguments = response.get("arguments", {})
@@ -769,23 +667,19 @@ Example of field references:
                     if reasoning and stream_callback:
                         stream_callback(f"\n\n💭 Reasoning: {reasoning}")
 
-                    # 사용자 확인
                     if confirm_callback:
                         if status_callback:
                             status_callback("⏸️ Waiting for confirmation...")
-                        
                         if not confirm_callback(tool_name, arguments):
                             if status_callback:
                                 status_callback("❌ Tool execution cancelled")
-                            return "Tool execution was cancelled by user. How would you like to proceed?"
+                            return "Tool execution was cancelled by user."
 
                     if status_callback:
                         status_callback(f"🔧 Executing: {tool_name}")
 
-                    # Tool 실행
                     tool_result = self._execute_tool(tool_name, arguments)
 
-                    # 결과 저장
                     if store_as and tool_result.get("result") == "success":
                         store_tool_result(store_as, tool_result)
                         if status_callback:
@@ -794,13 +688,8 @@ Example of field references:
                     if status_callback:
                         status_callback("📊 Tool completed")
 
-                    # 대화 기록에 추가
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": json.dumps(response, ensure_ascii=False)
-                    })
+                    self.conversation_history.append({"role": "assistant", "content": json.dumps(response, ensure_ascii=False)})
 
-                    # Tool 결과를 JSON 형식으로
                     result_summary = self._summarize_result(tool_result, store_as)
                     tool_result_json = {
                         "type": "tool_result",
@@ -810,17 +699,12 @@ Example of field references:
                         "stored_as": store_as,
                         "available_storage": get_storage_summary()
                     }
-
-                    self.conversation_history.append({
-                        "role": "user",
-                        "content": json.dumps(tool_result_json, ensure_ascii=False)
-                    })
+                    self.conversation_history.append({"role": "user", "content": json.dumps(tool_result_json, ensure_ascii=False)})
 
                     if stream_callback:
                         stream_callback(f"\n\n📊 Result:\n{result_summary}\n\n")
 
                 else:
-                    # Unknown type
                     if status_callback:
                         status_callback(f"⚠️ Unknown response type: {response_type}")
                     return f"Unexpected response type: {response_type}"
@@ -829,7 +713,6 @@ Example of field references:
                 if status_callback:
                     status_callback(f"❌ Error: {str(e)}")
                 
-                # JSON 파싱 실패 시 재시도 메시지
                 if "JSON" in str(e):
                     self.conversation_history.append({
                         "role": "user",
@@ -862,50 +745,76 @@ class AgentGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Agent V2 🤖 (JSON Mode)")
-        self.root.geometry("1100x850")
+        self.root.geometry("1200x900")
 
         self.agent = None
         self.processing = False
         self.confirm_tool_execution = tk.BooleanVar(value=True)
+        self.available_models = []
 
         self.setup_ui()
 
     def setup_ui(self):
         """UI 구성"""
 
-        # ===== 설정 프레임 =====
-        config_frame = ttk.LabelFrame(self.root, text="⚙️ Ollama 설정", padding=10)
-        config_frame.pack(fill=tk.X, padx=10, pady=5)
+        # ===== 연결 설정 프레임 =====
+        connect_frame = ttk.LabelFrame(self.root, text="🔗 Ollama 연결", padding=10)
+        connect_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        # Row 1: URL, Model, Connect
-        ttk.Label(config_frame, text="URL:").grid(row=0, column=0, padx=5, sticky=tk.W)
-        self.url_entry = ttk.Entry(config_frame, width=30)
+        ttk.Label(connect_frame, text="URL:").grid(row=0, column=0, padx=5, sticky=tk.W)
+        self.url_entry = ttk.Entry(connect_frame, width=35)
         self.url_entry.insert(0, "http://192.168.0.30:11434")
         self.url_entry.grid(row=0, column=1, padx=5)
 
-        ttk.Label(config_frame, text="Model:").grid(row=0, column=2, padx=5, sticky=tk.W)
-        self.model_var = tk.StringVar(value="llama3.1")
-        self.model_entry = ttk.Combobox(config_frame, textvariable=self.model_var, 
-                                         state="readonly", width=25)
-        self.model_entry.bind("<<ComboboxSelected>>", self._on_model_change)
-        self.model_entry.grid(row=0, column=3, padx=5)
+        self.refresh_btn = ttk.Button(connect_frame, text="🔄 Connect", command=self.connect)
+        self.refresh_btn.grid(row=0, column=2, padx=10)
 
-        self.refresh_btn = ttk.Button(config_frame, text="🔄 Connect", command=self.connect)
-        self.refresh_btn.grid(row=0, column=4, padx=10)
+        self.status_label = ttk.Label(connect_frame, text="● Not connected", foreground="red")
+        self.status_label.grid(row=0, column=3, padx=10)
 
-        self.status_label = ttk.Label(config_frame, text="● Not connected", foreground="red")
-        self.status_label.grid(row=0, column=5, padx=10)
+        # ===== 모델 설정 프레임 =====
+        model_frame = ttk.LabelFrame(self.root, text="⚙️ 모델 설정", padding=10)
+        model_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        # Row 2: Max tokens, Confirm
-        ttk.Label(config_frame, text="Max tokens:").grid(row=1, column=0, padx=5, sticky=tk.W, pady=5)
-        self.max_tokens_var = tk.IntVar(value=4000)
-        max_tokens_spinbox = ttk.Spinbox(config_frame, from_=1000, to=32000, 
-                                          increment=1000, textvariable=self.max_tokens_var, width=8)
-        max_tokens_spinbox.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+        # Agent 설정 (chat_json_mode)
+        ttk.Label(model_frame, text="🤖 Agent (JSON Mode):", font=("", 9, "bold")).grid(row=0, column=0, padx=5, sticky=tk.W)
+        
+        ttk.Label(model_frame, text="Model:").grid(row=0, column=1, padx=5, sticky=tk.E)
+        self.agent_model_var = tk.StringVar()
+        self.agent_model_combo = ttk.Combobox(model_frame, textvariable=self.agent_model_var, state="readonly", width=25)
+        self.agent_model_combo.grid(row=0, column=2, padx=5)
+        self.agent_model_combo.bind("<<ComboboxSelected>>", self._on_agent_model_change)
 
-        confirm_check = ttk.Checkbutton(config_frame, text="Confirm tool execution",
-                                        variable=self.confirm_tool_execution)
-        confirm_check.grid(row=1, column=2, padx=10, pady=5)
+        ttk.Label(model_frame, text="Max Tokens:").grid(row=0, column=3, padx=5, sticky=tk.E)
+        self.agent_tokens_var = tk.IntVar(value=4000)
+        agent_tokens_spinbox = ttk.Spinbox(model_frame, from_=1000, to=32000, increment=1000, textvariable=self.agent_tokens_var, width=8)
+        agent_tokens_spinbox.grid(row=0, column=4, padx=5, sticky=tk.W)
+        agent_tokens_spinbox.bind("<FocusOut>", self._on_agent_tokens_change)
+        agent_tokens_spinbox.bind("<Return>", self._on_agent_tokens_change)
+
+        # ask_llm 설정 (chat_simple)
+        ttk.Label(model_frame, text="💬 ask_llm (Chat Mode):", font=("", 9, "bold")).grid(row=1, column=0, padx=5, sticky=tk.W, pady=(10,0))
+        
+        ttk.Label(model_frame, text="Model:").grid(row=1, column=1, padx=5, sticky=tk.E, pady=(10,0))
+        self.ask_llm_model_var = tk.StringVar()
+        self.ask_llm_model_combo = ttk.Combobox(model_frame, textvariable=self.ask_llm_model_var, state="readonly", width=25)
+        self.ask_llm_model_combo.grid(row=1, column=2, padx=5, pady=(10,0))
+        self.ask_llm_model_combo.bind("<<ComboboxSelected>>", self._on_ask_llm_model_change)
+
+        ttk.Label(model_frame, text="Max Tokens:").grid(row=1, column=3, padx=5, sticky=tk.E, pady=(10,0))
+        self.ask_llm_tokens_var = tk.IntVar(value=4000)
+        ask_llm_tokens_spinbox = ttk.Spinbox(model_frame, from_=1000, to=32000, increment=1000, textvariable=self.ask_llm_tokens_var, width=8)
+        ask_llm_tokens_spinbox.grid(row=1, column=4, padx=5, sticky=tk.W, pady=(10,0))
+        ask_llm_tokens_spinbox.bind("<FocusOut>", self._on_ask_llm_tokens_change)
+        ask_llm_tokens_spinbox.bind("<Return>", self._on_ask_llm_tokens_change)
+
+        # 현재 설정 표시
+        self.settings_label = ttk.Label(model_frame, text="", font=("Consolas", 8), foreground="gray")
+        self.settings_label.grid(row=2, column=0, columnspan=4, padx=5, pady=(10,0), sticky=tk.W)
+
+        # 옵션
+        confirm_check = ttk.Checkbutton(model_frame, text="Tool 실행 전 확인", variable=self.confirm_tool_execution)
+        confirm_check.grid(row=2, column=4, padx=10, pady=(10,0), sticky=tk.E)
 
         # ===== 채팅 영역 =====
         chat_frame = ttk.LabelFrame(self.root, text="💬 Conversation", padding=10)
@@ -918,10 +827,7 @@ class AgentGUI:
         chat_container = ttk.Frame(paned)
         paned.add(chat_container, weight=3)
 
-        self.chat_display = scrolledtext.ScrolledText(
-            chat_container, wrap=tk.WORD, width=70, height=30,
-            font=("Consolas", 10), state=tk.DISABLED
-        )
+        self.chat_display = scrolledtext.ScrolledText(chat_container, wrap=tk.WORD, width=70, height=30, font=("Consolas", 10), state=tk.DISABLED)
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
         # 오른쪽: Storage TreeView
@@ -934,12 +840,9 @@ class AgentGUI:
         self.storage_tree.column("#0", width=120, minwidth=80)
         self.storage_tree.column("value", width=200, minwidth=100)
 
-        tree_scroll_y = ttk.Scrollbar(storage_container, orient=tk.VERTICAL, 
-                                       command=self.storage_tree.yview)
-        tree_scroll_x = ttk.Scrollbar(storage_container, orient=tk.HORIZONTAL, 
-                                       command=self.storage_tree.xview)
-        self.storage_tree.configure(yscrollcommand=tree_scroll_y.set, 
-                                     xscrollcommand=tree_scroll_x.set)
+        tree_scroll_y = ttk.Scrollbar(storage_container, orient=tk.VERTICAL, command=self.storage_tree.yview)
+        tree_scroll_x = ttk.Scrollbar(storage_container, orient=tk.HORIZONTAL, command=self.storage_tree.xview)
+        self.storage_tree.configure(yscrollcommand=tree_scroll_y.set, xscrollcommand=tree_scroll_x.set)
 
         self.storage_tree.grid(row=0, column=0, sticky="nsew")
         tree_scroll_y.grid(row=0, column=1, sticky="ns")
@@ -947,15 +850,13 @@ class AgentGUI:
         storage_container.grid_rowconfigure(0, weight=1)
         storage_container.grid_columnconfigure(0, weight=1)
 
-        refresh_storage_btn = ttk.Button(storage_container, text="🔄 Refresh", 
-                                          command=self.refresh_storage_tree)
+        refresh_storage_btn = ttk.Button(storage_container, text="🔄 Refresh", command=self.refresh_storage_tree)
         refresh_storage_btn.grid(row=2, column=0, columnspan=2, pady=5, sticky="ew")
 
         # 태그 설정
         self.chat_display.tag_config("user", foreground="#2196F3", font=("Consolas", 10, "bold"))
         self.chat_display.tag_config("assistant", foreground="#4CAF50", font=("Consolas", 10))
         self.chat_display.tag_config("system", foreground="#FF9800", font=("Consolas", 9, "italic"))
-        self.chat_display.tag_config("json", foreground="#9C27B0", font=("Consolas", 9))
 
         # ===== 입력 영역 =====
         input_frame = ttk.Frame(chat_frame)
@@ -968,12 +869,10 @@ class AgentGUI:
         btn_frame = ttk.Frame(input_frame)
         btn_frame.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.send_btn = ttk.Button(btn_frame, text="Send\n(Ctrl+Enter)",
-                                   command=self.send_message, state=tk.DISABLED)
+        self.send_btn = ttk.Button(btn_frame, text="Send\n(Ctrl+Enter)", command=self.send_message, state=tk.DISABLED)
         self.send_btn.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
-        self.reset_btn = ttk.Button(btn_frame, text="Reset\nChat",
-                                    command=self.reset_chat, state=tk.DISABLED)
+        self.reset_btn = ttk.Button(btn_frame, text="Reset\nChat", command=self.reset_chat, state=tk.DISABLED)
         self.reset_btn.pack(fill=tk.BOTH, expand=True)
 
         # ===== 도구 정보 =====
@@ -983,26 +882,54 @@ class AgentGUI:
         tools_text = "  •  ".join([f"{name}" for name in TOOLS.keys()])
         ttk.Label(tools_frame, text=tools_text, font=("Consolas", 9)).pack()
 
-    def _on_model_change(self, event=None):
-        """모델 변경 시 Agent 재생성"""
-        self._create_agent()
+    def _update_settings_label(self):
+        """현재 설정 레이블 업데이트"""
+        agent_model = self.agent_model_var.get() or "None"
+        agent_tokens = self.agent_tokens_var.get()
+        ask_llm_model = self.ask_llm_model_var.get() or "None"
+        ask_llm_tokens = self.ask_llm_tokens_var.get()
+        self.settings_label.config(text=f"Agent: {agent_model} ({agent_tokens} tokens) | ask_llm: {ask_llm_model} ({ask_llm_tokens} tokens)")
+
+    def _on_agent_model_change(self, event=None):
+        if self.agent:
+            self.agent.update_settings(agent_model=self.agent_model_var.get())
+        self._update_settings_label()
+        self.append_text(f"[System] Agent model → {self.agent_model_var.get()}\n", "system")
+
+    def _on_agent_tokens_change(self, event=None):
+        if self.agent:
+            self.agent.update_settings(agent_max_tokens=self.agent_tokens_var.get())
+        self._update_settings_label()
+
+    def _on_ask_llm_model_change(self, event=None):
+        if self.agent:
+            self.agent.update_settings(ask_llm_model=self.ask_llm_model_var.get())
+        self._update_settings_label()
+        self.append_text(f"[System] ask_llm model → {self.ask_llm_model_var.get()}\n", "system")
+
+    def _on_ask_llm_tokens_change(self, event=None):
+        if self.agent:
+            self.agent.update_settings(ask_llm_max_tokens=self.ask_llm_tokens_var.get())
+        self._update_settings_label()
 
     def _create_agent(self):
-        """현재 설정으로 Agent 생성"""
-        if not self.model_var.get():
+        if not self.agent_model_var.get():
             return
-        
-        self.agent = OllamaAgentJsonMode(self.url_entry.get(), self.model_var.get())
-        self.append_text(f"[System] Agent created (JSON Mode)\n", "system")
+        self.agent = OllamaAgentJsonMode(
+            ollama_url=self.url_entry.get(),
+            agent_model=self.agent_model_var.get(),
+            agent_max_tokens=self.agent_tokens_var.get(),
+            ask_llm_model=self.ask_llm_model_var.get(),
+            ask_llm_max_tokens=self.ask_llm_tokens_var.get()
+        )
+        self._update_settings_label()
+        self.append_text(f"[System] Agent created\n", "system")
 
     def refresh_storage_tree(self):
-        """Storage TreeView 갱신"""
         for item in self.storage_tree.get_children():
             self.storage_tree.delete(item)
-
         for key, value in TOOL_RESULT_STORAGE.items():
             parent_id = self.storage_tree.insert("", tk.END, text=f"${key}", open=True)
-
             if isinstance(value, dict):
                 for field, field_value in value.items():
                     display_value = self._format_tree_value(field_value)
@@ -1012,7 +939,6 @@ class AgentGUI:
                 self.storage_tree.insert(parent_id, tk.END, text="(value)", values=(display_value,))
 
     def _format_tree_value(self, value: Any) -> str:
-        """TreeView에 표시할 값 포맷팅"""
         if isinstance(value, str):
             return f"<{len(value)} chars>" if len(value) > 50 else value
         elif isinstance(value, list):
@@ -1022,7 +948,6 @@ class AgentGUI:
         return str(value)
 
     def append_text(self, text: str, tag: str = None):
-        """텍스트 추가 (thread-safe)"""
         def _append():
             self.chat_display.config(state=tk.NORMAL)
             if tag:
@@ -1034,52 +959,47 @@ class AgentGUI:
         self.root.after(0, _append)
 
     def set_status(self, text: str, color: str = "black"):
-        """상태 업데이트"""
         def _update():
             self.status_label.config(text=text, foreground=color)
         self.root.after(0, _update)
 
     def confirm_tool_execution_dialog(self, tool_name: str, arguments: Dict[str, Any]) -> bool:
-        """도구 실행 확인 다이얼로그"""
         if not self.confirm_tool_execution.get():
             return True
-
         args_formatted = json.dumps(arguments, indent=2, ensure_ascii=False)
         tool_desc = TOOLS.get(tool_name, {}).get('description', 'No description')
-
-        message = f"""The agent wants to execute a tool:
+        message = f"""Tool 실행 요청:
 
 Tool: {tool_name}
-Description: {tool_desc}
+설명: {tool_desc}
 
 Arguments:
 {args_formatted}
 
-Do you want to proceed?"""
-
-        return messagebox.askyesno("Confirm Tool Execution", message, icon='question')
+실행하시겠습니까?"""
+        return messagebox.askyesno("Tool 실행 확인", message, icon='question')
 
     def connect(self):
-        """Ollama 연결"""
         def _connect():
             try:
-                # 모델 목록 가져오기
                 url = urllib.parse.urljoin(self.url_entry.get(), "/api/tags")
                 with urllib.request.urlopen(url, timeout=10) as response:
                     data = json.load(response)
                     models = [model["name"] for model in data["models"]]
 
                 def _update_ui():
-                    self.model_entry["values"] = models
+                    self.available_models = models
+                    self.agent_model_combo["values"] = models
+                    self.ask_llm_model_combo["values"] = models
                     if models:
-                        self.model_entry.set(models[0])
-                        self._create_agent()
+                        self.agent_model_combo.set(models[0])
+                        self.ask_llm_model_combo.set(models[0])
+                    self._create_agent()
                     self.set_status("● Connected", "green")
                     self.append_text(f"[System] Connected to {self.url_entry.get()}\n", "system")
-                    self.append_text(f"[System] Available models: {', '.join(models)}\n", "system")
+                    self.append_text(f"[System] Models: {', '.join(models)}\n", "system")
                     self.send_btn.config(state=tk.NORMAL)
                     self.reset_btn.config(state=tk.NORMAL)
-
                 self.root.after(0, _update_ui)
 
             except Exception as e:
@@ -1091,58 +1011,41 @@ Do you want to proceed?"""
         threading.Thread(target=_connect, daemon=True).start()
 
     def send_message(self):
-        """메시지 전송"""
         if self.processing or not self.agent:
             return
-
         user_input = self.input_text.get("1.0", tk.END).strip()
         if not user_input:
             return
 
         self.input_text.delete("1.0", tk.END)
-        self.append_text(f"👤 You:\n", "user")
-        self.append_text(f"{user_input}\n\n")
-
+        self.append_text(f"👤 You:\n{user_input}\n\n", "user")
         self.processing = True
         self.send_btn.config(state=tk.DISABLED)
         self.input_text.config(state=tk.DISABLED)
-
         self.append_text(f"🤖 Assistant:\n", "assistant")
 
         def _process():
             try:
                 def stream_cb(token):
                     self.append_text(token)
-
                 def status_cb(status):
                     self.append_text(f"\n[{status}]\n", "system")
                     self.root.after(0, self.refresh_storage_tree)
-
                 def confirm_cb(tool_name, arguments):
                     result_container = [None]
                     event = threading.Event()
-
                     def _ask():
                         result_container[0] = self.confirm_tool_execution_dialog(tool_name, arguments)
                         event.set()
-
                     self.root.after(0, _ask)
                     event.wait()
                     return result_container[0]
 
-                self.agent.chat(
-                    user_input,
-                    stream_callback=stream_cb,
-                    status_callback=status_cb,
-                    confirm_callback=confirm_cb,
-                    max_tokens=self.max_tokens_var.get()
-                )
-
+                self.agent.chat(user_input, stream_callback=stream_cb, status_callback=status_cb, confirm_callback=confirm_cb)
                 self.append_text("\n\n" + "=" * 80 + "\n\n")
 
             except Exception as e:
                 self.append_text(f"\n\n❌ Error: {str(e)}\n\n", "system")
-
             finally:
                 self.processing = False
                 self.root.after(0, lambda: self.send_btn.config(state=tk.NORMAL))
@@ -1152,14 +1055,11 @@ Do you want to proceed?"""
         threading.Thread(target=_process, daemon=True).start()
 
     def reset_chat(self):
-        """채팅 초기화"""
         if self.agent:
             self.agent.reset()
-
         self.chat_display.config(state=tk.NORMAL)
         self.chat_display.delete("1.0", tk.END)
         self.chat_display.config(state=tk.DISABLED)
-
         self.refresh_storage_tree()
         self.append_text("[System] Chat reset! 🔄\n\n", "system")
 
