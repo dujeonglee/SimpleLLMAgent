@@ -9,6 +9,7 @@ import sys
 import threading
 import urllib.parse
 import urllib.request
+import re
 from typing import List, Dict, Any, Optional, Callable
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,203 @@ except ImportError:
     print("Error: tkinter not installed")
     print("Run: sudo apt-get install python3-tk")
     sys.exit(1)
+
+# Web scraping imports (optional, will check availability)
+try:
+    import requests
+    from bs4 import BeautifulSoup
+    WEB_TOOLS_AVAILABLE = True
+except ImportError:
+    WEB_TOOLS_AVAILABLE = False
+    print("Warning: requests or beautifulsoup4 not installed")
+    print("Web search tools will be disabled")
+    print("Run: pip install requests beautifulsoup4")
+
+# Graph visualization imports (optional)
+try:
+    import networkx as nx
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    GRAPH_TOOLS_AVAILABLE = True
+except ImportError:
+    GRAPH_TOOLS_AVAILABLE = False
+    print("Warning: networkx or matplotlib not installed")
+    print("Graph visualization will be disabled")
+    print("Run: pip install networkx matplotlib")
+
+# ============================================================================
+# 그래프 시각화
+# ============================================================================
+
+class GraphVisualizer:
+    """대화, 도구, Storage 관계를 그래프로 시각화"""
+    
+    def __init__(self):
+        if not GRAPH_TOOLS_AVAILABLE:
+            raise ImportError("NetworkX and Matplotlib required for graph visualization")
+    
+    @staticmethod
+    def create_tool_call_graph(conversation_history: List[Dict]) -> nx.DiGraph:
+        """Tool 호출 관계 그래프 생성"""
+        G = nx.DiGraph()
+        
+        tool_sequence = []
+        for msg in conversation_history:
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                try:
+                    data = json.loads(content) if isinstance(content, str) else content
+                    if data.get("type") == "tool_call":
+                        tool_name = data.get("tool", "unknown")
+                        store_as = data.get("store_as", "")
+                        tool_sequence.append((tool_name, store_as))
+                except:
+                    continue
+        
+        # 노드 추가
+        G.add_node("START", node_type="start")
+        
+        for i, (tool, store_as) in enumerate(tool_sequence):
+            node_id = f"{tool}_{i}"
+            G.add_node(node_id, label=tool, store_as=store_as, node_type="tool")
+            
+            if i == 0:
+                G.add_edge("START", node_id)
+            else:
+                prev_node = f"{tool_sequence[i-1][0]}_{i-1}"
+                G.add_edge(prev_node, node_id)
+        
+        if tool_sequence:
+            last_node = f"{tool_sequence[-1][0]}_{len(tool_sequence)-1}"
+            G.add_node("END", node_type="end")
+            G.add_edge(last_node, "END")
+        
+        return G
+    
+    @staticmethod
+    def create_storage_reference_graph() -> nx.DiGraph:
+        """Storage 참조 관계 그래프 생성"""
+        G = nx.DiGraph()
+        
+        # Storage의 모든 키를 노드로 추가
+        for key in TOOL_RESULT_STORAGE.keys():
+            G.add_node(key, node_type="storage")
+        
+        # 참조 관계 분석 (간단한 버전)
+        # 실제로는 conversation history에서 $key 참조를 파싱해야 함
+        # 여기서는 Storage 간 참조를 표시
+        
+        return G
+    
+    @staticmethod
+    def create_conversation_flow_graph(conversation_history: List[Dict]) -> nx.DiGraph:
+        """대화 흐름 그래프 생성"""
+        G = nx.DiGraph()
+        
+        prev_node = None
+        for i, msg in enumerate(conversation_history):
+            role = msg.get("role", "unknown")
+            node_id = f"{role}_{i}"
+            
+            # 노드 레이블 생성
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                try:
+                    data = json.loads(content)
+                    if data.get("type") == "tool_call":
+                        label = f"{role}\n[{data.get('tool')}]"
+                    elif data.get("type") == "tool_result":
+                        label = f"{role}\n[result]"
+                    else:
+                        label = f"{role}\n[{data.get('type', 'text')}]"
+                except:
+                    label = f"{role}\n[text]"
+            else:
+                label = f"{role}\n[text]"
+            
+            G.add_node(node_id, label=label, role=role, node_type="message")
+            
+            if prev_node:
+                G.add_edge(prev_node, node_id)
+            
+            prev_node = node_id
+        
+        return G
+    
+    @staticmethod
+    def draw_graph(G: nx.DiGraph, title: str = "Graph", figsize=(12, 8)) -> plt.Figure:
+        """그래프 그리기"""
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # 레이아웃 선택
+        if len(G.nodes()) > 0:
+            try:
+                pos = nx.spring_layout(G, k=2, iterations=50)
+            except:
+                pos = nx.shell_layout(G)
+        else:
+            pos = {}
+        
+        # 노드 타입별 색상
+        node_colors = []
+        node_sizes = []
+        for node in G.nodes():
+            node_data = G.nodes[node]
+            node_type = node_data.get("node_type", "default")
+            
+            if node_type == "start":
+                node_colors.append("#4CAF50")
+                node_sizes.append(1500)
+            elif node_type == "end":
+                node_colors.append("#F44336")
+                node_sizes.append(1500)
+            elif node_type == "tool":
+                node_colors.append("#2196F3")
+                node_sizes.append(2000)
+            elif node_type == "storage":
+                node_colors.append("#FF9800")
+                node_sizes.append(2000)
+            elif node_type == "message":
+                role = node_data.get("role", "")
+                if role == "user":
+                    node_colors.append("#90CAF9")
+                elif role == "assistant":
+                    node_colors.append("#A5D6A7")
+                else:
+                    node_colors.append("#CE93D8")
+                node_sizes.append(1800)
+            else:
+                node_colors.append("#BDBDBD")
+                node_sizes.append(1500)
+        
+        # 노드 그리기
+        nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, 
+                               alpha=0.9, ax=ax)
+        
+        # 엣지 그리기
+        nx.draw_networkx_edges(G, pos, edge_color="#666666", arrows=True, 
+                               arrowsize=20, arrowstyle='->', ax=ax, 
+                               connectionstyle="arc3,rad=0.1", width=2)
+        
+        # 레이블 그리기
+        labels = {}
+        for node in G.nodes():
+            node_data = G.nodes[node]
+            if "label" in node_data:
+                labels[node] = node_data["label"]
+            else:
+                labels[node] = str(node)
+        
+        nx.draw_networkx_labels(G, pos, labels, font_size=9, font_weight="bold", ax=ax)
+        
+        ax.set_title(title, fontsize=16, fontweight="bold", pad=20)
+        ax.axis('off')
+        plt.tight_layout()
+        
+        return fig
+
 
 # ============================================================================
 # 통계 관리
@@ -459,6 +657,129 @@ Please provide a detailed and helpful response."""
         })
 
 
+def web_search(query: str, max_results: int = 10) -> Dict[str, Any]:
+    """웹 검색 수행 (DuckDuckGo HTML 스크래핑)"""
+    if not WEB_TOOLS_AVAILABLE:
+        return make_return_object({
+            "result": "failure",
+            "error": "Web tools not available. Install: pip install requests beautifulsoup4"
+        })
+    
+    try:
+        # DuckDuckGo HTML 검색
+        url = "https://html.duckduckgo.com/html/"
+        params = {"q": query}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        response = requests.post(url, data=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        results = []
+        
+        # 검색 결과 파싱
+        for result_div in soup.find_all('div', class_='result', limit=max_results):
+            try:
+                title_tag = result_div.find('a', class_='result__a')
+                snippet_tag = result_div.find('a', class_='result__snippet')
+                
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+                    url = title_tag.get('href', '')
+                    snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+                    
+                    results.append({
+                        "title": title,
+                        "url": url,
+                        "snippet": snippet
+                    })
+            except Exception as e:
+                continue
+        
+        return make_return_object({
+            "result": "success",
+            "query": query,
+            "results": results,
+            "count": len(results)
+        })
+    
+    except Exception as e:
+        return make_return_object({
+            "result": "failure",
+            "query": query,
+            "error": str(e)
+        })
+
+
+def web_fetch(url: str, extract_text: bool = True) -> Dict[str, Any]:
+    """URL에서 웹페이지 콘텐츠 가져오기"""
+    if not WEB_TOOLS_AVAILABLE:
+        return make_return_object({
+            "result": "failure",
+            "error": "Web tools not available. Install: pip install requests beautifulsoup4"
+        })
+    
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 제목 추출
+        title = soup.title.string if soup.title else "No title"
+        
+        result_data = {
+            "result": "success",
+            "url": url,
+            "title": title,
+            "status_code": response.status_code
+        }
+        
+        if extract_text:
+            # 스크립트, 스타일 제거
+            for script in soup(["script", "style", "nav", "footer", "header"]):
+                script.decompose()
+            
+            # 본문 텍스트 추출
+            text = soup.get_text(separator='\n', strip=True)
+            
+            # 빈 줄 제거
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            text = '\n'.join(lines)
+            
+            # 텍스트 길이 제한 (최대 10000자)
+            if len(text) > 10000:
+                text = text[:10000] + "\n... (truncated)"
+            
+            result_data["text"] = text
+            result_data["text_length"] = len(text)
+        
+        # 링크 추출
+        links = []
+        for a_tag in soup.find_all('a', href=True, limit=50):
+            href = a_tag['href']
+            if href.startswith('http'):
+                links.append(href)
+        
+        result_data["links"] = links
+        result_data["links_count"] = len(links)
+        
+        return make_return_object(result_data)
+    
+    except Exception as e:
+        return make_return_object({
+            "result": "failure",
+            "url": url,
+            "error": str(e)
+        })
+
+
 # Tool 레지스트리
 TOOLS = {
     "get_file": {
@@ -498,6 +819,22 @@ TOOLS = {
         "parameters": {
             "query": {"type": "string", "required": True, "description": "The question or request to send to LLM"},
             "context": {"type": "string", "required": False, "default": "", "description": "Additional context (use $key.content reference)"}
+        }
+    },
+    "web_search": {
+        "function": web_search,
+        "description": "Search the web using DuckDuckGo. Returns list of results with titles, URLs, and snippets",
+        "parameters": {
+            "query": {"type": "string", "required": True, "description": "Search query"},
+            "max_results": {"type": "integer", "required": False, "default": 10, "description": "Maximum number of results (1-20)"}
+        }
+    },
+    "web_fetch": {
+        "function": web_fetch,
+        "description": "Fetch and parse content from a URL. Returns title, text content, and links",
+        "parameters": {
+            "url": {"type": "string", "required": True, "description": "URL to fetch"},
+            "extract_text": {"type": "boolean", "required": False, "default": True, "description": "Extract text content from HTML"}
         }
     }
 }
@@ -851,7 +1188,18 @@ Example references:
                 else:
                     if status_callback:
                         status_callback(f"⚠️ Unknown response type: {response_type}")
-                    return f"Unexpected response type: {response_type}"
+                    
+                    # 응답 형식 오류 피드백
+                    error_msg = {
+                        "type": "system_error",
+                        "error": f"Invalid response type: '{response_type}'. Must be 'tool_call', 'response', or 'clarification'.",
+                        "hint": "Check your JSON format. Example: {\"type\": \"tool_call\", \"tool\": \"web_search\", \"arguments\": {...}, \"store_as\": \"key\", \"reasoning\": \"...\"}"
+                    }
+                    self.conversation_history.append({
+                        "role": "user",
+                        "content": json.dumps(error_msg, ensure_ascii=False)
+                    })
+                    continue  # 다음 iteration으로
 
             except Exception as e:
                 if status_callback:
@@ -1055,6 +1403,34 @@ class AgentGUI:
         stats_tab = ttk.Frame(main_notebook)
         main_notebook.add(stats_tab, text="📊 Statistics")
 
+        # ===== Tab 6: Graph View =====
+        graph_tab = ttk.Frame(main_notebook)
+        if GRAPH_TOOLS_AVAILABLE:
+            main_notebook.add(graph_tab, text="🔗 Graph")
+        
+        # Graph 툴바
+        graph_toolbar = ttk.Frame(graph_tab)
+        graph_toolbar.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(graph_toolbar, text="Graph Visualization", font=("", 12, "bold")).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(graph_toolbar, text="🔧 Tool Calls", command=lambda: self.show_graph("tool")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(graph_toolbar, text="💬 Conversation", command=lambda: self.show_graph("conversation")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(graph_toolbar, text="📦 Storage", command=lambda: self.show_graph("storage")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(graph_toolbar, text="💾 Save PNG", command=self.save_graph).pack(side=tk.RIGHT, padx=5)
+
+        # Graph 표시 영역
+        self.graph_canvas_frame = ttk.Frame(graph_tab)
+        self.graph_canvas_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.current_graph_canvas = None
+        self.current_graph_figure = None
+        
+        if not GRAPH_TOOLS_AVAILABLE:
+            ttk.Label(self.graph_canvas_frame, 
+                     text="Graph visualization disabled\nInstall: pip install networkx matplotlib",
+                     font=("", 12), foreground="gray").pack(expand=True)
+
         # Statistics 툴바
         stats_toolbar = ttk.Frame(stats_tab)
         stats_toolbar.pack(fill=tk.X, pady=(0, 10))
@@ -1209,8 +1585,86 @@ class AgentGUI:
         tools_frame = ttk.LabelFrame(self.root, text="🔧 Available Tools", padding=10)
         tools_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        tools_text = "  •  ".join([f"{name}" for name in TOOLS.keys()])
+        tools_list = list(TOOLS.keys())
+        if not WEB_TOOLS_AVAILABLE:
+            tools_text = "  •  ".join([f"{name}" for name in tools_list if name not in ["web_search", "web_fetch"]])
+            tools_text += "  •  [web_search, web_fetch: disabled - install requests & beautifulsoup4]"
+        else:
+            tools_text = "  •  ".join([f"{name}" for name in tools_list])
+        
         ttk.Label(tools_frame, text=tools_text, font=("Consolas", 9)).pack()
+
+    def show_graph(self, graph_type: str):
+        """그래프 생성 및 표시"""
+        if not GRAPH_TOOLS_AVAILABLE:
+            messagebox.showwarning("Warning", "Graph tools not available.\nInstall: pip install networkx matplotlib")
+            return
+        
+        if not self.agent:
+            messagebox.showwarning("Warning", "No agent connected")
+            return
+        
+        try:
+            visualizer = GraphVisualizer()
+            
+            if graph_type == "tool":
+                G = visualizer.create_tool_call_graph(self.agent.conversation_history)
+                title = "Tool Call Sequence"
+            elif graph_type == "conversation":
+                G = visualizer.create_conversation_flow_graph(self.agent.conversation_history)
+                title = "Conversation Flow"
+            elif graph_type == "storage":
+                G = visualizer.create_storage_reference_graph()
+                title = "Storage References"
+            else:
+                return
+            
+            if len(G.nodes()) == 0:
+                messagebox.showinfo("Info", f"No data available for {title}")
+                return
+            
+            # 기존 캔버스 제거
+            if self.current_graph_canvas:
+                self.current_graph_canvas.get_tk_widget().destroy()
+            
+            # 기존 figure 닫기
+            if self.current_graph_figure:
+                plt.close(self.current_graph_figure)
+            
+            # 새 그래프 생성
+            fig = visualizer.draw_graph(G, title=title)
+            self.current_graph_figure = fig
+            
+            # Tkinter 캔버스에 표시
+            canvas = FigureCanvasTkAgg(fig, master=self.graph_canvas_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            self.current_graph_canvas = canvas
+            
+            self.log_debug(f"Graph generated: {title}", "success")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate graph:\n{str(e)}")
+            self.log_debug(f"Graph generation failed: {str(e)}", "error")
+
+    def save_graph(self):
+        """현재 그래프를 PNG 파일로 저장"""
+        if not self.current_graph_figure:
+            messagebox.showwarning("Warning", "No graph to save")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"graph_{timestamp}.png"
+            
+            self.current_graph_figure.savefig(filename, dpi=300, bbox_inches='tight')
+            
+            messagebox.showinfo("Success", f"Graph saved to:\n{filename}")
+            self.log_debug(f"Graph saved: {filename}", "success")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save graph:\n{str(e)}")
+            self.log_debug(f"Graph save failed: {str(e)}", "error")
 
     def refresh_statistics(self):
         """통계 표시 갱신"""
