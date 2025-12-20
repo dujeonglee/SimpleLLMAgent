@@ -124,11 +124,34 @@ class LLMResponse:
 
 class StepType(Enum):
     """Step 유형"""
+    PLANNING = "planning"       # 계획 수립 중
+    PLAN_READY = "plan_ready"   # 계획 완료
     THINKING = "thinking"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     FINAL_ANSWER = "final_answer"
     ERROR = "error"
+
+
+@dataclass
+class PlannedStep:
+    """계획된 단계"""
+    step: int
+    tool_name: str
+    action: str
+    description: str
+    params_hint: Dict = field(default_factory=dict)
+    status: str = "pending"  # pending, running, completed, failed
+    
+    def to_dict(self) -> Dict:
+        return {
+            "step": self.step,
+            "tool_name": self.tool_name,
+            "action": self.action,
+            "description": self.description,
+            "params_hint": self.params_hint,
+            "status": self.status
+        }
 
 
 @dataclass
@@ -160,11 +183,10 @@ class Orchestrator:
     """
     Multi-Agent Chatbot Orchestrator
     
-    ReAct 패턴으로 동작:
-    1. LLM에게 다음 행동 질문
-    2. Tool 실행
-    3. 결과 저장 + Streaming 출력
-    4. 완료 여부 판단 → 반복 또는 종료
+    Plan & Execute 패턴으로 동작:
+    1. Planning: LLM이 전체 계획 수립 (PlannedStep 배열)
+    2. Execution: 계획에 따라 Tool 실행
+    3. Final Answer: 결과를 바탕으로 최종 응답 생성
     """
     
     def __init__(
@@ -185,6 +207,7 @@ class Orchestrator:
         
         self._stopped = False
         self._current_step = 0
+        self._plan: List[PlannedStep] = []  # 실행 계획
         
         self.logger.info("Orchestrator 초기화", {
             "max_steps": max_steps,
@@ -234,7 +257,11 @@ class Orchestrator:
     
     def run_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
         """
-        Streaming 실행 - 각 step 결과를 yield
+        Streaming 실행 - Plan & Execute 패턴
+        
+        Phase 1: Planning - 전체 계획 수립
+        Phase 2: Execution - 계획에 따라 Tool 실행
+        Phase 3: Final Answer - 결과 기반 최종 응답
         
         Args:
             user_query: 사용자 쿼리
@@ -244,49 +271,92 @@ class Orchestrator:
         """
         self._stopped = False
         self._current_step = 0
+        self._plan = []
         
         # 세션 시작
         session_id = self.storage.start_session(user_query)
         self.logger.info(f"실행 시작: {user_query[:50]}...")
         
         try:
-            while not self._is_complete():
-                self._current_step += 1
+            # =====================================================
+            # Phase 1: Planning
+            # =====================================================
+            yield StepInfo(
+                type=StepType.PLANNING,
+                step=0,
+                content="작업 계획 수립 중..."
+            )
+            
+            plan_response = self._create_plan(user_query)
+            if plan_response.get("direct_answer"):
+                # Tool 없이 바로 답변 가능한 경우
+                self.storage.complete_session(
+                    final_response=plan_response["direct_answer"],
+                    status="completed"
+                )
+                yield StepInfo(
+                    type=StepType.FINAL_ANSWER,
+                    step=0,
+                    content=plan_response["direct_answer"]
+                )
+                return
+            
+            # 계획 파싱
+            self._plan = self._parse_plan(plan_response.get("plan", []))
+
+            if not self._plan:
+                # 계획이 없으면 일반 대화로 처리
+                direct_response = plan_response.get("thought", "요청을 처리할 수 없습니다.")
+                self.storage.complete_session(
+                    final_response=direct_response,
+                    status="completed"
+                )
+                yield StepInfo(
+                    type=StepType.FINAL_ANSWER,
+                    step=0,
+                    content=direct_response
+                )
+                return
+            
+            # 계획 정보 출력
+            plan_summary = self._format_plan_summary()
+
+            yield StepInfo(
+                type=StepType.PLAN_READY,
+                step=0,
+                content=plan_summary
+            )
+            
+            # =====================================================
+            # Phase 2: Execution
+            # =====================================================
+            for planned_step in self._plan:
+                if self._stopped:
+                    break
+                    
+                self._current_step = planned_step.step
+                planned_step.status = "running"
                 
-                # 1. LLM에게 다음 행동 질문
+                # 현재 실행할 step에 대한 상세 파라미터 결정
                 yield StepInfo(
                     type=StepType.THINKING,
                     step=self._current_step,
-                    content="다음 행동 결정 중..."
+                    content=f"Step {self._current_step}: {planned_step.description}"
                 )
                 
-                llm_response = self._ask_llm(user_query)
+                # LLM에게 정확한 파라미터 요청
+                execution_response = self._get_execution_params(user_query, planned_step)
                 
-                # 2. 사고 과정 출력
-                if llm_response.thought:
+                if execution_response.thought:
                     yield StepInfo(
                         type=StepType.THINKING,
                         step=self._current_step,
-                        content=llm_response.thought
+                        content=execution_response.thought
                     )
                 
-                # 3. 최종 답변인 경우
-                if llm_response.is_final_answer:
-                    self.storage.complete_session(
-                        final_response=llm_response.content,
-                        status="completed"
-                    )
-                    
-                    yield StepInfo(
-                        type=StepType.FINAL_ANSWER,
-                        step=self._current_step,
-                        content=llm_response.content
-                    )
-                    break
-                
-                # 4. Tool 호출 실행
-                if llm_response.tool_calls:
-                    for tool_call in llm_response.tool_calls:
+                # Tool 호출 실행
+                if execution_response.tool_calls:
+                    for tool_call in execution_response.tool_calls:
                         # Tool 호출 알림
                         yield StepInfo(
                             type=StepType.TOOL_CALL,
@@ -310,6 +380,9 @@ class Orchestrator:
                             error_message=result.error
                         )
                         
+                        # 상태 업데이트
+                        planned_step.status = "completed" if result.success else "failed"
+                        
                         # 결과 출력
                         yield StepInfo(
                             type=StepType.TOOL_RESULT,
@@ -327,19 +400,27 @@ class Orchestrator:
                         content="Step completed"
                     ))
             
-            # 최대 step 도달
-            if self._current_step >= self.max_steps:
-                final_msg = self._generate_partial_response()
-                self.storage.complete_session(
-                    final_response=final_msg,
-                    status="max_steps_reached"
-                )
-                
-                yield StepInfo(
-                    type=StepType.FINAL_ANSWER,
-                    step=self._current_step,
-                    content=final_msg
-                )
+            # =====================================================
+            # Phase 3: Final Answer
+            # =====================================================
+            yield StepInfo(
+                type=StepType.THINKING,
+                step=self._current_step + 1,
+                content="최종 응답 생성 중..."
+            )
+            
+            final_response = self._generate_final_answer(user_query)
+            
+            self.storage.complete_session(
+                final_response=final_response,
+                status="completed"
+            )
+            
+            yield StepInfo(
+                type=StepType.FINAL_ANSWER,
+                step=self._current_step + 1,
+                content=final_response
+            )
         
         except Exception as e:
             error_msg = f"실행 중 오류 발생: {str(e)}"
@@ -372,32 +453,290 @@ class Orchestrator:
         
         return False
     
-    def _ask_llm(self, user_query: str) -> LLMResponse:
-        """LLM에게 다음 행동 질문"""
+    # =========================================================================
+    # Planning Methods
+    # =========================================================================
+    
+    def _create_plan(self, user_query: str) -> Dict:
+        """
+        Phase 1: 전체 실행 계획 수립
         
-        # System prompt 생성
-        system_prompt = self._build_system_prompt()
+        Returns:
+            Dict: {"plan": [...], "thought": "..."} 또는 {"direct_answer": "..."}
+        """
+        tools_schema = json.dumps(
+            self.tools.get_all_schemas(),
+            indent=2,
+            ensure_ascii=False
+        )
         
-        # User prompt 생성 (현재 컨텍스트 포함)
-        user_prompt = self._build_user_prompt(user_query)
+        system_prompt = f"""You are a task planning expert. Analyze the user's request and create an execution plan.
+
+## Available Tools
+{tools_schema}
+
+## Your Task
+1. Analyze what the user wants
+2. Decide if tools are needed
+3. If yes, create a step-by-step plan
+4. If no tools needed, provide direct answer
+
+## Response Format (JSON only)
+
+If tools are needed:
+{{
+    "thought": "Analysis of what needs to be done",
+    "plan": [
+        {{
+            "step": 1,
+            "tool_name": "file_tool",
+            "action": "read",
+            "description": "Read the source file to analyze"
+        }},
+        {{
+            "step": 2,
+            "tool_name": "web_tool",
+            "action": "search",
+            "description": "Search for related information"
+        }}
+    ]
+}}
+
+If no tools needed (simple question, greeting, etc.):
+{{
+    "thought": "This is a simple question I can answer directly",
+    "direct_answer": "Your answer here"
+}}
+
+## Rules
+- Maximum {self.max_steps} steps
+- Use only available tools and actions
+- Each step should have clear purpose
+- Order steps logically
+- Respond with valid JSON only"""
+
+        user_prompt = f"""## User Request
+{user_query}
+
+Create an execution plan or provide direct answer. Respond with JSON only."""
+
+        self.logger.debug("Planning 호출", {"query": user_query[:50]})
         
-        self.logger.debug("LLM 호출", {
-            "model": self.llm_config.model,
-            "user_prompt_length": len(user_prompt)
-        })
-        
-        # LLM API 호출
         raw_response = self._call_llm_api(system_prompt, user_prompt)
         
-        # 응답 파싱
-        parsed = self._parse_llm_response(raw_response)
+        # JSON 파싱
+        try:
+            parsed = self._extract_json(raw_response)
+            self.logger.debug("Plan 생성 완료", {
+                "has_plan": "plan" in parsed,
+                "has_direct_answer": "direct_answer" in parsed
+            })
+            return parsed
+        except Exception as e:
+            self.logger.error(f"Plan 파싱 실패: {e}")
+            return {"direct_answer": f"계획 수립 중 오류가 발생했습니다: {str(e)}"}
+    
+    def _parse_plan(self, plan_data: List[Dict]) -> List[PlannedStep]:
+        """계획 데이터를 PlannedStep 객체 리스트로 변환"""
+        planned_steps = []
+
+        # plan_data가 리스트가 아니면 빈 리스트 반환
+        if not isinstance(plan_data, list):
+            self.logger.warn(f"plan_data가 리스트가 아님: {type(plan_data)}")
+            return planned_steps
+
+        for item in plan_data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                step = PlannedStep(
+                    step=item.get("step", len(planned_steps) + 1),
+                    tool_name=item.get("tool_name", item.get("tool", "")),
+                    action=item.get("action", ""),
+                    description=item.get("description", ""),
+                    params_hint=item.get("params_hint", item.get("params", {})),
+                    status="pending"
+                )
+                planned_steps.append(step)
+            except Exception as e:
+                self.logger.warn(f"Step 파싱 실패: {e}, item: {item}")
+                continue
         
-        self.logger.debug("LLM 응답 파싱 완료", {
-            "has_tool_calls": parsed.tool_calls is not None,
-            "is_final": parsed.is_final_answer
-        })
+        return planned_steps
+    
+    def _format_plan_summary(self) -> str:
+        """계획 요약 문자열 생성"""
+        if not self._plan:
+            return "계획 없음"
         
-        return parsed
+        lines = ["📋 **실행 계획**\n"]
+        for step in self._plan:
+            status_icon = {
+                "pending": "⏳",
+                "running": "🔄",
+                "completed": "✅",
+                "failed": "❌"
+            }.get(step.status, "⏳")
+            
+            lines.append(f"{status_icon} Step {step.step}: {step.tool_name}.{step.action}")
+            lines.append(f"   └─ {step.description}")
+        
+        return "\n".join(lines)
+    
+    def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> LLMResponse:
+        """
+        계획된 step 실행을 위한 정확한 파라미터 결정
+        """
+        tools_schema = json.dumps(
+            self.tools.get_all_schemas(),
+            indent=2,
+            ensure_ascii=False
+        )
+        
+        # 현재까지의 결과 수집
+        results = self.storage.get_results()
+        previous_results = self._format_previous_results(results)
+        
+        # 현재 계획 상태
+        plan_status = self._format_plan_with_status()
+        
+        system_prompt = f"""You are executing a planned task. Provide exact parameters for the current step.
+
+## Available Tools
+{tools_schema}
+
+## Current Plan Status
+{plan_status}
+
+## Response Format
+{{
+    "thought": "Why these parameters",
+    "tool_calls": [
+        {{
+            "name": "{planned_step.tool_name}",
+            "arguments": {{
+                "action": "{planned_step.action}",
+                "{planned_step.action}_param1": "value1",
+                "{planned_step.action}_param2": "value2"
+            }}
+        }}
+    ]
+}}
+
+## Rules
+- Execute ONLY the current step (Step {planned_step.step})
+- Use parameter names with action prefix (e.g., read_path, write_content)
+- Provide exact values based on user query and previous results
+- Respond with valid JSON only"""
+
+        user_prompt = f"""## Original User Query
+{user_query}
+
+## Previous Results
+{previous_results}
+
+## Current Step to Execute
+Step {planned_step.step}: {planned_step.tool_name}.{planned_step.action}
+Description: {planned_step.description}
+
+Provide exact parameters for this step. Respond with JSON only."""
+
+        raw_response = self._call_llm_api(system_prompt, user_prompt)
+        return self._parse_llm_response(raw_response)
+    
+    def _format_plan_with_status(self) -> str:
+        """상태가 포함된 계획 포맷"""
+        if not self._plan:
+            return "No plan"
+        
+        lines = []
+        for step in self._plan:
+            status_icon = {
+                "pending": "[ ]",
+                "running": "[→]",
+                "completed": "[✓]",
+                "failed": "[✗]"
+            }.get(step.status, "[ ]")
+            
+            lines.append(f"{status_icon} Step {step.step}: {step.tool_name}.{step.action} - {step.description}")
+        
+        return "\n".join(lines)
+    
+    def _format_previous_results(self, results: List[Dict]) -> str:
+        """이전 결과 포맷"""
+        if not results:
+            return "None yet."
+        
+        formatted = ""
+        for r in results:
+            step = r.get('step', '?')
+            tool = r.get('tool', r.get('executor', 'unknown'))
+            action = r.get('action', 'unknown')
+            status = r.get('status', 'unknown')
+            output = str(r.get("output", ""))
+            
+            status_icon = "✅" if status == "success" else "❌"
+            
+            formatted += f"""
+[Step {step}] {status_icon} {tool}.{action} - {status.upper()}
+  Result: {output}
+"""
+        return formatted
+    
+    def _generate_final_answer(self, user_query: str) -> str:
+        """
+        Phase 3: 실행 결과를 바탕으로 최종 응답 생성
+        """
+        results = self.storage.get_results()
+        previous_results = self._format_previous_results(results)
+        plan_status = self._format_plan_with_status()
+        
+        system_prompt = """You are generating the final response based on executed tasks.
+
+## Your Task
+1. Review what was done (plan execution results)
+2. Summarize the findings
+3. Provide a helpful, complete answer to the user
+
+## Rules
+- Be concise but thorough
+- Reference specific results when relevant
+- If any step failed, mention it and provide alternatives if possible
+- Respond naturally, not in JSON format"""
+
+        user_prompt = f"""## Original User Query
+{user_query}
+
+## Execution Plan
+{plan_status}
+
+## Execution Results
+{previous_results}
+
+Based on the above results, provide a final answer to the user's query."""
+
+        response = self._call_llm_api(system_prompt, user_prompt)
+        return response.strip()
+    
+    def _extract_json(self, text: str) -> Dict:
+        """텍스트에서 JSON 추출"""
+        import re
+        
+        # ```json ... ``` 패턴
+        json_match = re.search(r'```json\s*([\s\S]*?)\s*```', text)
+        if json_match:
+            return json.loads(json_match.group(1))
+        
+        # { ... } 패턴
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            return json.loads(json_match.group(0))
+        
+        raise ValueError("JSON not found in response")
+    
+    # =========================================================================
+    # Legacy Methods (kept for compatibility)
+    # =========================================================================
     
     def _build_system_prompt(self) -> str:
         """System prompt 생성"""
@@ -469,11 +808,9 @@ You must respond in valid JSON format only. No other text before or after the JS
                 # 상태 아이콘
                 status_icon = "✅" if status == "success" else "❌"
                 
-                output_preview = output
-                
                 previous_results += f"""
 [Step {step}] {status_icon} {tool}.{action} - {status.upper()}
-  Result: {output_preview}
+  Result: {output}
 """
         
         # 중복 호출 방지 힌트
@@ -535,7 +872,7 @@ Decide the next action. If the task is complete, provide final answer. Respond w
             self.logger.error(f"LLM API 호출 실패: {str(e)}")
             raise
     
-    def _extract_json(self, text: str) -> Optional[str]:
+    def _extract_json_str(self, text: str) -> Optional[str]:
         """텍스트에서 유효한 JSON 추출 (괄호 매칭 방식)"""
         # { 위치 찾기
         start = text.find('{')
@@ -657,7 +994,7 @@ Decide the next action. If the task is complete, provide final answer. Respond w
             sanitized_response = self._sanitize_json_string(raw_response)
             
             # 2. JSON 추출 (괄호 매칭 방식)
-            json_str = self._extract_json(sanitized_response)
+            json_str = self._extract_json_str(sanitized_response)
             
             if not json_str:
                 # JSON을 찾을 수 없으면 전체를 final answer로 처리
