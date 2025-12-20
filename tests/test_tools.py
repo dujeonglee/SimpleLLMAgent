@@ -113,15 +113,15 @@ class TestFileTool(unittest.TestCase):
         
         # 쓰기
         write_result = self.tool.execute("write", {
-            "path": "test.txt",
-            "content": "Hello, World!"
+            "write_path": "test.txt",
+            "write_content": "Hello, World!"
         })
         
         self.assertTrue(write_result.success)
         print(f"  ✓ 파일 쓰기 완료: {write_result.output}")
         
         # 읽기
-        read_result = self.tool.execute("read", {"path": "test.txt"})
+        read_result = self.tool.execute("read", {"read_path": "test.txt"})
         
         self.assertTrue(read_result.success)
         self.assertEqual(read_result.output, "Hello, World!")
@@ -133,14 +133,14 @@ class TestFileTool(unittest.TestCase):
         
         # 첫 번째 쓰기
         self.tool.execute("write", {
-            "path": "overwrite.txt",
-            "content": "Original"
+            "write_path": "overwrite.txt",
+            "write_content": "Original"
         })
         
         # 덮어쓰기 시도 (실패해야 함)
         result = self.tool.execute("write", {
-            "path": "overwrite.txt",
-            "content": "New content"
+            "write_path": "overwrite.txt",
+            "write_content": "New content"
         })
         self.assertFalse(result.success)
         self.assertIn("already exists", result.error)
@@ -148,14 +148,14 @@ class TestFileTool(unittest.TestCase):
         
         # overwrite=True로 덮어쓰기
         result = self.tool.execute("write", {
-            "path": "overwrite.txt",
-            "content": "New content",
-            "overwrite": True
+            "write_path": "overwrite.txt",
+            "write_content": "New content",
+            "write_overwrite": True
         })
         self.assertTrue(result.success)
         
         # 내용 확인
-        read_result = self.tool.execute("read", {"path": "overwrite.txt"})
+        read_result = self.tool.execute("read", {"read_path": "overwrite.txt"})
         self.assertEqual(read_result.output, "New content")
         print("  ✓ 덮어쓰기 완료")
     
@@ -165,19 +165,19 @@ class TestFileTool(unittest.TestCase):
         
         # 파일 생성
         self.tool.execute("write", {
-            "path": "append.txt",
-            "content": "Line 1\n"
+            "write_path": "append.txt",
+            "write_content": "Line 1\n"
         })
         
         # 내용 추가
         result = self.tool.execute("append", {
-            "path": "append.txt",
-            "content": "Line 2\n"
+            "append_path": "append.txt",
+            "append_content": "Line 2\n"
         })
         self.assertTrue(result.success)
         
         # 확인
-        read_result = self.tool.execute("read", {"path": "append.txt"})
+        read_result = self.tool.execute("read", {"read_path": "append.txt"})
         self.assertEqual(read_result.output, "Line 1\nLine 2\n")
         print("  ✓ 내용 추가 완료")
     
@@ -187,17 +187,17 @@ class TestFileTool(unittest.TestCase):
         
         # 파일 생성
         self.tool.execute("write", {
-            "path": "delete_me.txt",
-            "content": "To be deleted"
+            "write_path": "delete_me.txt",
+            "write_content": "To be deleted"
         })
         
         # 삭제
-        result = self.tool.execute("delete", {"path": "delete_me.txt"})
+        result = self.tool.execute("delete", {"delete_path": "delete_me.txt"})
         self.assertTrue(result.success)
         self.assertIn("deleted successfully", result.output)
         
         # 존재 확인
-        exists_result = self.tool.execute("exists", {"path": "delete_me.txt"})
+        exists_result = self.tool.execute("exists", {"exists_path": "delete_me.txt"})
         self.assertIn("does not exist", exists_result.output)
         print("  ✓ 파일 삭제 완료")
     
@@ -206,20 +206,20 @@ class TestFileTool(unittest.TestCase):
         print("\n[TEST] FileTool 디렉토리 목록")
         
         # 파일들 생성
-        self.tool.execute("write", {"path": "file1.txt", "content": "1"})
-        self.tool.execute("write", {"path": "file2.txt", "content": "2"})
-        self.tool.execute("write", {"path": "file3.log", "content": "3"})
+        self.tool.execute("write", {"write_path": "file1.txt", "write_content": "1"})
+        self.tool.execute("write", {"write_path": "file2.txt", "write_content": "2"})
+        self.tool.execute("write", {"write_path": "file3.log", "write_content": "3"})
         
         # 전체 목록
-        result = self.tool.execute("list_dir", {"path": "."})
+        result = self.tool.execute("list_dir", {"list_dir_path": "."})
         self.assertTrue(result.success)
         self.assertEqual(len(result.output), 3)
         print(f"  ✓ 전체 목록: {result.output}")
         
         # 패턴 필터
         result = self.tool.execute("list_dir", {
-            "path": ".",
-            "pattern": "*.txt"
+            "list_dir_path": ".",
+            "list_dir_pattern": "*.txt"
         })
         self.assertEqual(len(result.output), 2)
         print(f"  ✓ *.txt 필터: {result.output}")
@@ -248,7 +248,7 @@ class TestFileTool(unittest.TestCase):
         """파일 없음"""
         print("\n[TEST] FileTool 파일 없음")
         
-        result = self.tool.execute("read", {"path": "not_exist.txt"})
+        result = self.tool.execute("read", {"read_path": "not_exist.txt"})
         
         self.assertFalse(result.success)
         self.assertIn("not found", result.error)
@@ -279,8 +279,8 @@ class TestWebTool(unittest.TestCase):
         print("\n[TEST] WebTool 검색 (Mock)")
         
         result = self.tool.execute("search", {
-            "keyword": "python tutorial",
-            "max_results": 3
+            "search_keyword": "python tutorial",
+            "search_max_results": 3
         })
         
         self.assertTrue(result.success)
@@ -306,7 +306,7 @@ class TestWebTool(unittest.TestCase):
         print("\n[TEST] WebTool 페이지 가져오기 (Mock)")
         
         result = self.tool.execute("fetch", {
-            "url": "https://example.com/test"
+            "fetch_url": "https://example.com/test"
         })
         
         self.assertTrue(result.success)
@@ -320,7 +320,7 @@ class TestWebTool(unittest.TestCase):
         """잘못된 URL"""
         print("\n[TEST] WebTool 잘못된 URL")
         
-        result = self.tool.execute("fetch", {"url": "not-a-valid-url"})
+        result = self.tool.execute("fetch", {"fetch_url": "not-a-valid-url"})
         
         self.assertFalse(result.success)
         self.assertIn("Invalid URL", result.error)
@@ -353,7 +353,7 @@ class TestLLMTool(unittest.TestCase):
         print("\n[TEST] LLMTool 질문하기 (Mock)")
         
         result = self.tool.execute("ask", {
-            "prompt": "Python의 장점은 무엇인가요?"
+            "ask_prompt": "Python의 장점은 무엇인가요?"
         })
         
         self.assertTrue(result.success)
@@ -368,8 +368,8 @@ class TestLLMTool(unittest.TestCase):
         print("\n[TEST] LLMTool 분석하기 (Mock)")
         
         result = self.tool.execute("analyze", {
-            "content": "[ERROR] DMA timeout at 0x1234\n[WARN] Retry failed",
-            "instruction": "에러 로그를 분석해주세요"
+            "analyze_content": "[ERROR] DMA timeout at 0x1234\n[WARN] Retry failed",
+            "analyze_instruction": "에러 로그를 분석해주세요"
         })
         
         self.assertTrue(result.success)
@@ -385,8 +385,8 @@ class TestLLMTool(unittest.TestCase):
         long_content = "이것은 매우 긴 내용입니다. " * 50
         
         result = self.tool.execute("summarize", {
-            "content": long_content,
-            "max_length": 100
+            "summarize_content": long_content,
+            "summarize_max_length": 100
         })
         
         self.assertTrue(result.success)
@@ -400,7 +400,7 @@ class TestLLMTool(unittest.TestCase):
         print("\n[TEST] LLMTool 정보 추출하기 (Mock)")
         
         result = self.tool.execute("extract", {
-            "content": "[ERROR] Connection failed\n[ERROR] Timeout\n[WARN] Retry",
+            "extract_content": "[ERROR] Connection failed\n[ERROR] Timeout\n[WARN] Retry",
             "extract_type": "errors"
         })
         
@@ -473,15 +473,15 @@ class TestToolRegistry(unittest.TestCase):
         
         # 파일 쓰기
         result = self.registry.execute("file_tool", "write", {
-            "path": "registry_test.txt",
-            "content": "Created via registry"
+            "write_path": "registry_test.txt",
+            "write_content": "Created via registry"
         })
         self.assertTrue(result.success)
         self.assertIn("created successfully", result.output)
         
         # 파일 읽기
         result = self.registry.execute("file_tool", "read", {
-            "path": "registry_test.txt"
+            "read_path": "registry_test.txt"
         })
         self.assertTrue(result.success)
         self.assertEqual(result.output, "Created via registry")
@@ -539,19 +539,19 @@ class TestToolIntegration(unittest.TestCase):
 [2025-01-15 10:30:05] ERROR: Reconnection failed
 """
         self.file_tool.execute("write", {
-            "path": "error.log",
-            "content": error_log
+            "write_path": "error.log",
+            "write_content": error_log
         })
         
         # 3. Step 1: 파일 읽기
-        result = self.file_tool.execute("read", {"path": "error.log"})
+        result = self.file_tool.execute("read", {"read_path": "error.log"})
         self.assertTrue(result.success)
         
         self.storage.add_result(
             executor=self.file_tool.name,
             executor_type="tool",
             action="read",
-            input_data={"path": "error.log"},
+            input_data={"read_path": "error.log"},
             output=result.output,
             status="success" if result.success else "error"
         )
@@ -561,8 +561,8 @@ class TestToolIntegration(unittest.TestCase):
         # 4. Step 2: LLM 분석
         previous_output = self.storage.get_last_output()
         result = self.llm_tool.execute("analyze", {
-            "content": previous_output,
-            "instruction": "이 에러 로그에서 주요 문제를 식별하고 원인을 분석해주세요."
+            "analyze_content": previous_output,
+            "analyze_instruction": "이 에러 로그에서 주요 문제를 식별하고 원인을 분석해주세요."
         })
         self.assertTrue(result.success)
         
@@ -570,7 +570,7 @@ class TestToolIntegration(unittest.TestCase):
             executor=self.llm_tool.name,
             executor_type="tool",
             action="analyze",
-            input_data={"content": previous_output[:100] + "..."},
+            input_data={"analyze_content": previous_output[:100] + "..."},
             output=result.output,
             status="success" if result.success else "error"
         )
@@ -579,8 +579,8 @@ class TestToolIntegration(unittest.TestCase):
         
         # 5. Step 3: 웹 검색
         result = self.web_tool.execute("search", {
-            "keyword": "DMA timeout wifi driver fix",
-            "max_results": 3
+            "search_keyword": "DMA timeout wifi driver fix",
+            "search_max_results": 3
         })
         self.assertTrue(result.success)
         
@@ -588,7 +588,7 @@ class TestToolIntegration(unittest.TestCase):
             executor=self.web_tool.name,
             executor_type="tool",
             action="search",
-            input_data={"keyword": "DMA timeout wifi driver fix"},
+            input_data={"search_keyword": "DMA timeout wifi driver fix"},
             output=result.output,
             status="success" if result.success else "error"
         )
