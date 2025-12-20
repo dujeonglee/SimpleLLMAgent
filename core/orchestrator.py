@@ -66,7 +66,6 @@ class ToolCall:
     KNOWN_ACTIONS = {
         "file_tool": ["read", "write", "append", "delete", "exists", "list_dir"],
         "web_tool": ["search", "fetch"],
-        "llm_tool": ["ask", "analyze", "summarize", "extract"]
     }
     
     def __post_init__(self):
