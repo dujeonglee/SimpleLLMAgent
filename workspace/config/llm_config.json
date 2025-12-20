@@ -1,0 +1,11 @@
+{
+  "model": "qwen2.5-coder:14b",
+  "temperature": 1,
+  "top_p": 0.9,
+  "max_tokens": 4096,
+  "base_url": "http://192.168.0.30:11434",
+  "timeout": 120,
+  "repeat_penalty": 1.1,
+  "num_ctx": 8192,
+  "last_updated": "2025-12-20T11:08:14.007812"
+}
