@@ -42,8 +42,8 @@ class WebTool(BaseTool):
                 name="search",
                 description="키워드로 웹 검색",
                 params=[
-                    ActionParam("keyword", "str", True, "검색 키워드"),
-                    ActionParam("max_results", "int", False, "최대 결과 수", 5)
+                    ActionParam("search_keyword", "str", True, "검색 키워드"),
+                    ActionParam("search_max_results", "int", False, "최대 결과 수", 5)
                 ],
                 output_type="list",
                 output_description="검색 결과 목록 [{title, url, snippet}, ...]"
@@ -52,8 +52,8 @@ class WebTool(BaseTool):
                 name="fetch",
                 description="URL에서 페이지 내용 가져오기",
                 params=[
-                    ActionParam("url", "str", True, "가져올 URL"),
-                    ActionParam("timeout", "int", False, "타임아웃 (초)", 10)
+                    ActionParam("fetch_url", "str", True, "가져올 URL"),
+                    ActionParam("fetch_timeout", "int", False, "타임아웃 (초)", 10)
                 ],
                 output_type="str",
                 output_description="페이지 텍스트 내용"
@@ -62,15 +62,20 @@ class WebTool(BaseTool):
     
     def _execute_action(self, action: str, params: Dict) -> ToolResult:
         """실제 action 실행"""
+        # prefix 파라미터 추출 헬퍼 (예: search_keyword -> keyword)
+        def get_param(name: str, default=None):
+            prefixed = f"{action}_{name}"
+            return params.get(prefixed, default)
+        
         if action == "search":
             return self._search(
-                params["keyword"],
-                params.get("max_results", 5)
+                get_param("keyword"),
+                get_param("max_results", 5)
             )
         elif action == "fetch":
             return self._fetch(
-                params["url"],
-                params.get("timeout", 10)
+                get_param("url"),
+                get_param("timeout", 10)
             )
         else:
             return ToolResult.error_result(f"Unknown action: {action}")
