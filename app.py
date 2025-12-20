@@ -182,16 +182,29 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[Tuple[List[Dict]
     ]
     current_response = ""
     step_outputs = []
+    thoughts = []  # thought 수집
+    plan_content = ""  # 계획 내용
     
     yield history, "🔄 처리 중..."
     
     try:
         for step in state.orchestrator.run_stream(full_query):
-            if step.type == StepType.THINKING:
+            if step.type == StepType.PLANNING:
+                yield history, f"📋 {step.content}"
+            
+            elif step.type == StepType.PLAN_READY:
+                plan_content = step.content
+                yield history, "📋 계획 수립 완료"
+            
+            elif step.type == StepType.THINKING:
+                thoughts.append(step.content)
                 yield history, f"💭 {step.content}"
             
             elif step.type == StepType.TOOL_CALL:
                 step_output = f"\n\n<details>\n<summary>🔧 Step {step.step}: {step.tool_name}.{step.action}</summary>\n\n"
+                # thought가 있으면 step에 포함
+                if thoughts:
+                    step_output += f"💭 **Thought:** {thoughts[-1]}\n\n"
                 step_outputs.append({
                     "header": step_output, 
                     "result": "",
@@ -213,13 +226,23 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[Tuple[List[Dict]
             
             elif step.type == StepType.FINAL_ANSWER:
                 # 최종 응답 구성
-                steps_md = ""
-                for s in step_outputs:
-                    steps_md += s["header"] + s["result"]
+                response_parts = []
                 
-                current_response = step.content
-                if steps_md:
-                    current_response = steps_md + "\n\n---\n\n" + current_response
+                # 계획 내용 추가
+                if plan_content:
+                    response_parts.append(f"<details>\n<summary>📋 실행 계획</summary>\n\n{plan_content}\n</details>")
+                
+                # Step 실행 결과 추가
+                if step_outputs:
+                    steps_md = ""
+                    for s in step_outputs:
+                        steps_md += s["header"] + s["result"]
+                    response_parts.append(steps_md)
+                
+                # 최종 응답 추가
+                response_parts.append(step.content)
+                
+                current_response = "\n\n---\n\n".join(filter(None, response_parts))
                 
                 history[-1] = {"role": "assistant", "content": current_response}
                 yield history, "✅ 완료"
@@ -484,6 +507,7 @@ def get_shared_storage_tree() -> str:
     html += "</div>"
     return html
 
+
 def refresh_shared_storage() -> str:
     """SharedStorage 새로고침"""
     return get_shared_storage_tree()
@@ -612,7 +636,7 @@ def create_ui() -> gr.Blocks:
             current_model = available_models[0]
             state.update_llm_config(model=current_model)
     
-    with gr.Blocks(title="Multi-Agent Chatbot", theme=gr.themes.Soft()) as app:
+    with gr.Blocks(title="Multi-Agent Chatbot") as app:
         
         gr.Markdown("# 🤖 Multi-Agent Chatbot")
         
@@ -911,7 +935,8 @@ def main():
     app.launch(
         server_name="localhost",
         server_port=7860,
-        share=False
+        share=False,
+        theme=gr.themes.Soft()
     )
 
 
