@@ -5,7 +5,7 @@ Gradio 기반 웹 인터페이스
 
 Layout:
 - Row 1: 채팅 영역 (대화창, 입력창)
-- Row 2: 탭 패널 (LLM Settings, Workspace Files, SharedStorage, History, HTML Preview, SystemPrompt)
+- Row 2: 탭 패널 (LLM Settings, Workspace Files, SharedStorage, History)
 """
 
 import os
@@ -28,7 +28,6 @@ from core.shared_storage import SharedStorage
 from core.base_tool import ToolRegistry
 from core.orchestrator import Orchestrator, LLMConfig, StepInfo, StepType
 from core.workspace_manager import WorkspaceManager, ConfigManager, FileInfo
-from core.html_utils import HTMLParser, store_html, get_html
 from tools.file_tool import FileTool
 from tools.web_tool import WebTool
 
@@ -132,30 +131,8 @@ def get_app_state() -> AppState:
 # =============================================================================
 
 def format_tool_result(content: str, tool_name: str, action: str) -> str:
-    """Tool 결과를 포맷팅 (HTML 감지 포함)"""
+    """Tool 결과를 포맷팅"""
     content_str = str(content)
-    
-    # HTML 감지 및 특별 처리
-    if tool_name == "web_tool" and action == "fetch" and HTMLParser.is_html(content_str):
-        # HTML 저장 및 요약 생성
-        html_hash = store_html(content_str)
-        summary = HTMLParser.summarize(content_str)
-        
-        warning = ""
-        if summary.has_scripts:
-            warning += "⚠️ 스크립트 포함 "
-        if summary.has_forms:
-            warning += "⚠️ 폼 포함 "
-        
-        size_kb = summary.char_count / 1024
-        
-        return f"""📄 **{summary.title}**
-
-{summary.text_preview}
-
-📊 크기: {size_kb:.1f}KB {warning}
-
-🔑 HTML ID: `{html_hash}` (미리보기/복사에 사용)"""
     
     # 일반 결과
     if len(content_str) > 500:
@@ -544,79 +521,6 @@ def get_history_html() -> str:
     
     return html
 
-
-# =============================================================================
-# HTML Preview Functions
-# =============================================================================
-
-def preview_html(html_hash: str) -> Tuple[str, str]:
-    """HTML 미리보기 생성"""
-    if not html_hash.strip():
-        return "", "❌ HTML ID를 입력해주세요."
-    
-    html_content = get_html(html_hash.strip())
-    if not html_content:
-        return "", f"❌ HTML을 찾을 수 없습니다: {html_hash}"
-    
-    # iframe용으로 정리
-    sanitized = HTMLParser.sanitize_for_iframe(html_content)
-    
-    # iframe HTML 생성
-    iframe_html = f'''<iframe 
-        srcdoc="{sanitized.replace('"', '&quot;')}" 
-        style="width:100%; height:400px; border:1px solid #ddd; border-radius:8px;"
-        sandbox="allow-same-origin">
-    </iframe>'''
-    
-    return iframe_html, f"✅ HTML 미리보기 로드됨 ({html_hash})"
-
-
-def get_html_source(html_hash: str) -> Tuple[str, str]:
-    """HTML 소스 가져오기"""
-    if not html_hash.strip():
-        return "", "❌ HTML ID를 입력해주세요."
-    
-    html_content = get_html(html_hash.strip())
-    if not html_content:
-        return "", f"❌ HTML을 찾을 수 없습니다: {html_hash}"
-    
-    return html_content, f"✅ HTML 소스 로드됨 ({len(html_content):,} bytes)"
-
-
-# =============================================================================
-# System Prompt Functions (NEW)
-# =============================================================================
-
-def get_system_prompt_html() -> str:
-    """현재 System Prompt를 HTML로 표시"""
-    state = get_app_state()
-    
-    # 현재 system prompt 가져오기
-    current_prompt = state.orchestrator._build_system_prompt()
-    
-    html = "<div style='font-family: monospace; font-size: 12px;'>"
-    
-    # 현재 프롬프트
-    html += "<h4>📝 현재 System Prompt</h4>"
-    html += f"<pre style='background: #f5f5f5; padding: 10px; border-radius: 4px; white-space: pre-wrap; max-height: 400px; overflow-y: auto;'>{current_prompt}</pre>"
-    
-    # 히스토리
-    if state.system_prompt_history:
-        html += f"<h4>📜 변경 히스토리 ({len(state.system_prompt_history)})</h4>"
-        for i, item in enumerate(reversed(state.system_prompt_history[-5:])):
-            html += f"<details><summary>Step {item['step']} - {item['timestamp'][:19]}</summary>"
-            html += f"<pre style='background: #fafafa; padding: 8px; font-size: 11px; max-height: 200px; overflow-y: auto;'>{item['prompt'][:500]}...</pre>"
-            html += "</details>"
-    
-    html += "</div>"
-    return html
-
-
-def refresh_system_prompt() -> str:
-    """System Prompt 새로고침"""
-    return get_system_prompt_html()
-
-
 # =============================================================================
 # Build UI
 # =============================================================================
@@ -768,36 +672,6 @@ def create_ui() -> gr.Blocks:
             with gr.TabItem("📜 History"):
                 history_html = gr.HTML(get_history_html())
                 refresh_history_btn = gr.Button("🔄 새로고침", size="sm")
-            
-            # ---------------------------------------------------------
-            # Tab 5: HTML Preview
-            # ---------------------------------------------------------
-            with gr.TabItem("🌐 HTML 미리보기"):
-                with gr.Row():
-                    html_hash_input = gr.Textbox(
-                        placeholder="HTML ID를 입력하세요 (예: a1b2c3d4e5f6)",
-                        label="HTML ID",
-                        scale=3
-                    )
-                    preview_btn = gr.Button("🔍 미리보기", size="sm", scale=1)
-                    copy_btn = gr.Button("📋 소스복사", size="sm", scale=1)
-                
-                html_preview_status = gr.Markdown("")
-                html_preview_frame = gr.HTML("")
-                
-                with gr.Accordion("📄 HTML 소스", open=False):
-                    html_source_text = gr.Textbox(
-                        label="HTML Source",
-                        lines=15,
-                        max_lines=30
-                    )
-            
-            # ---------------------------------------------------------
-            # Tab 6: System Prompt (NEW)
-            # ---------------------------------------------------------
-            with gr.TabItem("📝 System Prompt"):
-                system_prompt_html = gr.HTML(get_system_prompt_html())
-                refresh_prompt_btn = gr.Button("🔄 새로고침", size="sm")
         
         # =================================================================
         # Event Handlers
@@ -808,8 +682,7 @@ def create_ui() -> gr.Blocks:
             """채팅 완료 후 업데이트"""
             return (
                 get_history_html(),
-                get_shared_storage_tree(),
-                get_system_prompt_html()
+                get_shared_storage_tree()
             )
         
         msg_input.submit(
@@ -821,7 +694,7 @@ def create_ui() -> gr.Blocks:
             outputs=[msg_input]
         ).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree, system_prompt_html]
+            outputs=[history_html, storage_tree]
         )
         
         send_btn.click(
@@ -833,7 +706,7 @@ def create_ui() -> gr.Blocks:
             outputs=[msg_input]
         ).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree, system_prompt_html]
+            outputs=[history_html, storage_tree]
         )
         
         stop_btn.click(fn=stop_generation, outputs=[status_text])
@@ -842,7 +715,7 @@ def create_ui() -> gr.Blocks:
             outputs=[chatbot, status_text]
         ).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree, system_prompt_html]
+            outputs=[history_html, storage_tree]
         )
         
         # LLM Settings events
@@ -902,22 +775,6 @@ def create_ui() -> gr.Blocks:
         # History events
         refresh_history_btn.click(fn=get_history_html, outputs=[history_html])
         
-        # HTML Preview events
-        preview_btn.click(
-            fn=preview_html,
-            inputs=[html_hash_input],
-            outputs=[html_preview_frame, html_preview_status]
-        )
-        
-        copy_btn.click(
-            fn=get_html_source,
-            inputs=[html_hash_input],
-            outputs=[html_source_text, html_preview_status]
-        )
-        
-        # System Prompt events
-        refresh_prompt_btn.click(fn=refresh_system_prompt, outputs=[system_prompt_html])
-    
     return app
 
 
