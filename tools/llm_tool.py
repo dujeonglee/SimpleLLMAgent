@@ -53,8 +53,8 @@ class LLMTool(BaseTool):
                 name="ask",
                 description="LLM에 자유 질문",
                 params=[
-                    ActionParam("prompt", "str", True, "질문 내용"),
-                    ActionParam("system_prompt", "str", False, "시스템 프롬프트", None)
+                    ActionParam("ask_prompt", "str", True, "질문 내용"),
+                    ActionParam("ask_system_prompt", "str", False, "시스템 프롬프트", None)
                 ],
                 output_type="str",
                 output_description="LLM 응답"
@@ -63,9 +63,9 @@ class LLMTool(BaseTool):
                 name="analyze",
                 description="텍스트 분석 요청",
                 params=[
-                    ActionParam("content", "str", True, "분석할 내용"),
-                    ActionParam("instruction", "str", False, "분석 지시사항", "이 내용을 분석해주세요."),
-                    ActionParam("output_format", "str", False, "출력 형식 (text/json)", "text")
+                    ActionParam("analyze_content", "str", True, "분석할 내용"),
+                    ActionParam("analyze_instruction", "str", False, "분석 지시사항", "이 내용을 분석해주세요."),
+                    ActionParam("analyze_output_format", "str", False, "출력 형식 (text/json)", "text")
                 ],
                 output_type="str",
                 output_description="분석 결과"
@@ -74,8 +74,8 @@ class LLMTool(BaseTool):
                 name="summarize",
                 description="텍스트 요약",
                 params=[
-                    ActionParam("content", "str", True, "요약할 내용"),
-                    ActionParam("max_length", "int", False, "최대 길이 (글자수)", 500)
+                    ActionParam("summarize_content", "str", True, "요약할 내용"),
+                    ActionParam("summarize_max_length", "int", False, "최대 길이 (글자수)", 500)
                 ],
                 output_type="str",
                 output_description="요약된 내용"
@@ -84,9 +84,9 @@ class LLMTool(BaseTool):
                 name="extract",
                 description="텍스트에서 정보 추출",
                 params=[
-                    ActionParam("content", "str", True, "추출 대상 텍스트"),
+                    ActionParam("extract_content", "str", True, "추출 대상 텍스트"),
                     ActionParam("extract_type", "str", True, "추출할 정보 유형 (예: errors, keywords, entities)"),
-                    ActionParam("additional_instruction", "str", False, "추가 지시사항", None)
+                    ActionParam("extract_additional_instruction", "str", False, "추가 지시사항", None)
                 ],
                 output_type="dict",
                 output_description="추출된 정보 (JSON 형식)"
@@ -95,27 +95,32 @@ class LLMTool(BaseTool):
     
     def _execute_action(self, action: str, params: Dict) -> ToolResult:
         """실제 action 실행"""
+        # prefix 파라미터 추출 헬퍼 (예: ask_prompt -> prompt)
+        def get_param(name: str, default=None):
+            prefixed = f"{action}_{name}"
+            return params.get(prefixed, default)
+        
         if action == "ask":
             return self._ask(
-                params["prompt"],
-                params.get("system_prompt")
+                get_param("prompt"),
+                get_param("system_prompt")
             )
         elif action == "analyze":
             return self._analyze(
-                params["content"],
-                params.get("instruction", "이 내용을 분석해주세요."),
-                params.get("output_format", "text")
+                get_param("content"),
+                get_param("instruction", "이 내용을 분석해주세요."),
+                get_param("output_format", "text")
             )
         elif action == "summarize":
             return self._summarize(
-                params["content"],
-                params.get("max_length", 500)
+                get_param("content"),
+                get_param("max_length", 500)
             )
         elif action == "extract":
             return self._extract(
-                params["content"],
-                params["extract_type"],
-                params.get("additional_instruction")
+                get_param("content"),
+                get_param("type"),
+                get_param("additional_instruction")
             )
         else:
             return ToolResult.error_result(f"Unknown action: {action}")
