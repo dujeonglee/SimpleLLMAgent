@@ -39,8 +39,8 @@ class FileTool(BaseTool):
                 name="read",
                 description="파일 내용 읽기",
                 params=[
-                    ActionParam("path", "str", True, "파일 경로"),
-                    ActionParam("encoding", "str", False, "파일 인코딩", "utf-8")
+                    ActionParam("read_path", "str", True, "읽을 파일 경로"),
+                    ActionParam("read_encoding", "str", False, "파일 인코딩", "utf-8")
                 ],
                 output_type="str",
                 output_description="파일 내용"
@@ -49,10 +49,10 @@ class FileTool(BaseTool):
                 name="write",
                 description="파일에 내용 쓰기 (새 파일 생성 또는 덮어쓰기)",
                 params=[
-                    ActionParam("path", "str", True, "파일 경로"),
-                    ActionParam("content", "str", True, "작성할 내용"),
-                    ActionParam("overwrite", "bool", False, "기존 파일 덮어쓰기 여부", False),
-                    ActionParam("encoding", "str", False, "파일 인코딩", "utf-8")
+                    ActionParam("write_path", "str", True, "저장할 파일 경로"),
+                    ActionParam("write_content", "str", True, "작성할 내용"),
+                    ActionParam("write_overwrite", "bool", False, "기존 파일 덮어쓰기 여부", False),
+                    ActionParam("write_encoding", "str", False, "파일 인코딩", "utf-8")
                 ],
                 output_type="str",
                 output_description="작성된 파일의 절대 경로"
@@ -61,9 +61,9 @@ class FileTool(BaseTool):
                 name="append",
                 description="파일 끝에 내용 추가",
                 params=[
-                    ActionParam("path", "str", True, "파일 경로"),
-                    ActionParam("content", "str", True, "추가할 내용"),
-                    ActionParam("encoding", "str", False, "파일 인코딩", "utf-8")
+                    ActionParam("append_path", "str", True, "추가할 파일 경로"),
+                    ActionParam("append_content", "str", True, "추가할 내용"),
+                    ActionParam("append_encoding", "str", False, "파일 인코딩", "utf-8")
                 ],
                 output_type="str",
                 output_description="수정된 파일의 절대 경로"
@@ -72,7 +72,7 @@ class FileTool(BaseTool):
                 name="delete",
                 description="파일 삭제",
                 params=[
-                    ActionParam("path", "str", True, "파일 경로")
+                    ActionParam("delete_path", "str", True, "삭제할 파일 경로")
                 ],
                 output_type="bool",
                 output_description="삭제 성공 여부"
@@ -81,7 +81,7 @@ class FileTool(BaseTool):
                 name="exists",
                 description="파일 존재 여부 확인",
                 params=[
-                    ActionParam("path", "str", True, "파일 경로")
+                    ActionParam("exists_path", "str", True, "확인할 파일 경로")
                 ],
                 output_type="bool",
                 output_description="파일 존재 여부"
@@ -90,8 +90,8 @@ class FileTool(BaseTool):
                 name="list_dir",
                 description="디렉토리 내 파일 목록 조회",
                 params=[
-                    ActionParam("path", "str", True, "디렉토리 경로"),
-                    ActionParam("pattern", "str", False, "파일 패턴 (예: *.txt)", "*")
+                    ActionParam("list_dir_path", "str", True, "디렉토리 경로"),
+                    ActionParam("list_dir_pattern", "str", False, "파일 패턴 (예: *.txt)", "*")
                 ],
                 output_type="list",
                 output_description="파일 이름 목록"
@@ -100,27 +100,38 @@ class FileTool(BaseTool):
     
     def _execute_action(self, action: str, params: Dict) -> ToolResult:
         """실제 action 실행"""
+        # prefix 파라미터 추출 헬퍼 (예: read_path -> path)
+        def get_param(name: str, default=None):
+            prefixed = f"{action}_{name}"
+            return params.get(prefixed, default)
+        
         if action == "read":
-            return self._read(params["path"], params.get("encoding", "utf-8"))
+            return self._read(
+                get_param("path"),
+                get_param("encoding", "utf-8")
+            )
         elif action == "write":
             return self._write(
-                params["path"],
-                params["content"],
-                params.get("overwrite", False),
-                params.get("encoding", "utf-8")
+                get_param("path"),
+                get_param("content"),
+                get_param("overwrite", False),
+                get_param("encoding", "utf-8")
             )
         elif action == "append":
             return self._append(
-                params["path"],
-                params["content"],
-                params.get("encoding", "utf-8")
+                get_param("path"),
+                get_param("content"),
+                get_param("encoding", "utf-8")
             )
         elif action == "delete":
-            return self._delete(params["path"])
+            return self._delete(get_param("path"))
         elif action == "exists":
-            return self._exists(params["path"])
+            return self._exists(get_param("path"))
         elif action == "list_dir":
-            return self._list_dir(params["path"], params.get("pattern", "*"))
+            return self._list_dir(
+                get_param("path"),
+                get_param("pattern", "*")
+            )
         else:
             return ToolResult.error_result(f"Unknown action: {action}")
     
