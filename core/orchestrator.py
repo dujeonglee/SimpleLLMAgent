@@ -62,25 +62,11 @@ class ToolCall:
     name: str           # tool 이름 (예: file_tool)
     arguments: Dict     # action + params
     
-    # Tool별 action 추론 규칙
-    ACTION_INFERENCE_RULES = {
-        "file_tool": {
-            # arguments에 특정 키가 있으면 해당 action으로 추론
-            "content": "write",      # content가 있으면 write
-            "path": "read",          # path만 있으면 read
-            "pattern": "list_dir",   # pattern이 있으면 list_dir
-        },
-        "web_tool": {
-            "url": "fetch",          # url이 있으면 fetch
-            "keyword": "search",     # keyword가 있으면 search
-            "query": "search",       # query가 있으면 search
-        },
-        "llm_tool": {
-            "content": "summarize",  # content가 있으면 summarize
-            "prompt": "ask",         # prompt가 있으면 ask
-            "question": "ask",       # question이 있으면 ask
-            "text": "analyze",       # text가 있으면 analyze
-        }
+    # Tool별 알려진 action 목록 (prefix 추론용)
+    KNOWN_ACTIONS = {
+        "file_tool": ["read", "write", "append", "delete", "exists", "list_dir"],
+        "web_tool": ["search", "fetch"],
+        "llm_tool": ["ask", "analyze", "summarize", "extract"]
     }
     
     def __post_init__(self):
@@ -92,28 +78,26 @@ class ToolCall:
             if "action" not in self.arguments:
                 self.arguments["action"] = parts[1]
         
-        # 2. action이 여전히 없으면 arguments 기반으로 추론
+        # 2. action이 여전히 없으면 파라미터 prefix에서 추론
         if not self.arguments.get("action"):
-            inferred_action = self._infer_action()
+            inferred_action = self._infer_action_from_prefix()
             if inferred_action:
                 self.arguments["action"] = inferred_action
     
-    def _infer_action(self) -> Optional[str]:
-        """arguments 기반으로 action 추론"""
-        rules = self.ACTION_INFERENCE_RULES.get(self.name, {})
+    def _infer_action_from_prefix(self) -> Optional[str]:
+        """파라미터 prefix에서 action 추론
         
-        # 우선순위: content > 기타 키
-        for key, action in rules.items():
-            if key in self.arguments:
-                return action
+        예: read_path -> read, write_content -> write
+        """
+        known_actions = self.KNOWN_ACTIONS.get(self.name, [])
         
-        # 기본 action (fallback)
-        defaults = {
-            "file_tool": "read",
-            "web_tool": "search",
-            "llm_tool": "ask"
-        }
-        return defaults.get(self.name)
+        for key in self.arguments.keys():
+            if "_" in key:
+                prefix = key.split("_")[0]
+                if prefix in known_actions:
+                    return prefix
+        
+        return None
     
     @property
     def action(self) -> str:
@@ -397,7 +381,7 @@ class Orchestrator:
         
         # User prompt 생성 (현재 컨텍스트 포함)
         user_prompt = self._build_user_prompt(user_query)
-
+        
         self.logger.debug("LLM 호출", {
             "model": self.llm_config.model,
             "user_prompt_length": len(user_prompt)
