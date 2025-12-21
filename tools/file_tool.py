@@ -20,9 +20,6 @@ class FileTool(BaseTool):
     name = "file_tool"
     description = "파일 읽기, 쓰기, 수정, 삭제"
     
-    # 데이터를 그대로 반환해야 하는 action (포맷팅 제외)
-    _data_returning_actions = {"read", "list_dir"}
-    
     def __init__(self, base_path: str = None, debug_enabled: bool = True):
         """
         Args:
