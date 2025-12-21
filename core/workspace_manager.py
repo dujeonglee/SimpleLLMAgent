@@ -142,28 +142,7 @@ class WorkspaceManager:
         
         # 파일 출처 추적 (메모리)
         self._file_sources: Dict[str, str] = {}  # filename -> source
-        self._load_file_sources()
-        
         self.logger.info("WorkspaceManager 초기화", {"path": workspace_path})
-    
-    def _load_file_sources(self):
-        """파일 출처 정보 로드"""
-        sources_file = os.path.join(self.config_dir, "file_sources.json")
-        try:
-            if os.path.exists(sources_file):
-                with open(sources_file, "r", encoding="utf-8") as f:
-                    self._file_sources = json.load(f)
-        except Exception:
-            self._file_sources = {}
-    
-    def _save_file_sources(self):
-        """파일 출처 정보 저장"""
-        sources_file = os.path.join(self.config_dir, "file_sources.json")
-        try:
-            with open(sources_file, "w", encoding="utf-8") as f:
-                json.dump(self._file_sources, f, indent=2)
-        except Exception as e:
-            self.logger.error(f"파일 출처 저장 실패: {str(e)}")
     
     def save_upload(self, file_path: str, original_name: str = None) -> Optional[FileInfo]:
         """
@@ -190,7 +169,6 @@ class WorkspaceManager:
             
             # 3. 출처 기록
             self._file_sources[original_name] = "upload"
-            self._save_file_sources()
             
             # 4. 파일 정보 반환
             stat = os.stat(work_path)
@@ -262,7 +240,6 @@ class WorkspaceManager:
             # 출처 정보 삭제
             if filename in self._file_sources:
                 del self._file_sources[filename]
-                self._save_file_sources()
             
             self.logger.info(f"파일 삭제 완료: {filename}")
             return True
@@ -302,7 +279,6 @@ class WorkspaceManager:
         """파일을 'generated'로 표시 (FileTool에서 호출)"""
         if filename not in self._file_sources:
             self._file_sources[filename] = "generated"
-            self._save_file_sources()
     
     def get_files_for_prompt(self) -> str:
         """LLM 프롬프트용 파일 목록 문자열"""
