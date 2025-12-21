@@ -1,27 +1,24 @@
 """
-Multi-Agent Chatbot UI
-======================
-Gradio 기반 웹 인터페이스
+Multi-Agent Chatbot UI (Updated)
+================================
+Gradio 기반 웹 인터페이스 - 실시간 Streaming 개선
 
-Layout:
-- Header: 타이틀 + Settings 버튼
-- Row 1: 채팅 영역 (대화창, 입력창)
-- Row 2: 탭 패널 (Workspace Files, SharedStorage, History)
-- Modal: LLM Settings (팝업)
+변경사항:
+- chat_stream에서 실시간으로 진행 상황 표시
+- 각 Step 결과를 즉시 채팅창에 반영
+- 상태 표시줄 실시간 업데이트
 """
 
 import os
 import sys
 import warnings
 from datetime import datetime
-from typing import List, Tuple, Generator, Optional, Dict
+from typing import List, Generator, Optional, Dict
 
-# Gradio 내부 DeprecationWarning 숨기기 (starlette 호환성 문제)
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="gradio")
 
 import gradio as gr
 
-# 모듈 경로 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.shared_storage import SharedStorage
@@ -31,6 +28,7 @@ from core.workspace_manager import WorkspaceManager, ConfigManager, FileInfo
 from tools.file_tool import FileTool
 from tools.web_tool import WebTool
 from tools.llm_tool import LLMTool
+
 
 # =============================================================================
 # Global State
@@ -42,21 +40,16 @@ class AppState:
     def __init__(self, workspace_path: str = os.path.join(".", "workspace")):
         self.workspace_path = workspace_path
         
-        # 매니저 초기화
         self.workspace_manager = WorkspaceManager(workspace_path)
         self.config_manager = ConfigManager(os.path.join(workspace_path, "config"))
         
-        # LLM 설정 로드
         self.llm_config = self.config_manager.load_llm_config()
         
-        # Core 컴포넌트 초기화
         self.storage = SharedStorage(debug_enabled=True)
         self.registry = ToolRegistry(debug_enabled=True)
         
-        # Tools 등록
         self._setup_tools()
         
-        # Orchestrator 생성
         self.orchestrator = Orchestrator(
             tools=self.registry,
             storage=self.storage,
@@ -65,13 +58,8 @@ class AppState:
             debug_enabled=True
         )
         
-        # 대화 히스토리 (UI용)
         self.chat_history: List[Dict] = []
-        
-        # System Prompt 히스토리
         self.system_prompt_history: List[Dict] = []
-        
-        # Ollama 연결 상태
         self.ollama_connected: bool = False
         self.available_models: List[Dict] = []
     
@@ -89,19 +77,13 @@ class AppState:
         self.llm_config.update(**kwargs)
         self.orchestrator.update_llm_config(**kwargs)
         
-        # max_steps는 orchestrator에 직접 설정
         if 'max_steps' in kwargs:
             self.orchestrator.max_steps = kwargs['max_steps']
         
         self.config_manager.save_llm_config(self.llm_config)
     
-    def fetch_ollama_models(self, base_url: str = None) -> Tuple[bool, List[Dict]]:
-        """Ollama 서버에서 모델 목록 및 상세 정보 조회
-        
-        Returns:
-            Tuple[bool, List[Dict]]: (연결 성공 여부, 모델 정보 리스트)
-            모델 정보: {"name": str, "size": str, "family": str, "parameters": str}
-        """
+    def fetch_ollama_models(self, base_url: str = None) -> tuple[bool, List[Dict]]:
+        """Ollama 서버에서 모델 목록 조회"""
         if base_url is None:
             base_url = self.llm_config.base_url
         
@@ -117,18 +99,15 @@ class AppState:
                 size_bytes = model.get("size", 0)
                 details = model.get("details", {})
                 
-                # 크기 포맷팅
                 if size_bytes >= 1024 * 1024 * 1024:
                     size_str = f"{size_bytes / (1024**3):.1f}GB"
                 else:
                     size_str = f"{size_bytes / (1024**2):.0f}MB"
                 
-                # 모델 정보 추출
                 family = details.get("family", "unknown")
                 param_size = details.get("parameter_size", "")
                 quantization = details.get("quantization_level", "")
                 
-                # 특성 문자열 생성
                 features = []
                 if param_size:
                     features.append(param_size)
@@ -153,22 +132,12 @@ class AppState:
             self.ollama_connected = False
             self.available_models = []
             return False, []
-    
-    def add_system_prompt_history(self, prompt: str, step: int):
-        """System Prompt 히스토리 추가"""
-        self.system_prompt_history.append({
-            "step": step,
-            "timestamp": datetime.now().isoformat(),
-            "prompt": prompt
-        })
 
 
-# 전역 상태
 app_state: Optional[AppState] = None
 
 
 def get_app_state() -> AppState:
-    """앱 상태 가져오기 (lazy initialization)"""
     global app_state
     if app_state is None:
         app_state = AppState()
@@ -176,106 +145,212 @@ def get_app_state() -> AppState:
 
 
 # =============================================================================
-# Chat Functions
+# Chat Functions (Updated - Real-time Streaming)
 # =============================================================================
 
-def format_tool_result(content: str, tool_name: str, action: str) -> str:
-    """Tool 결과를 포맷팅"""
+def format_tool_result(content: str, tool_name: str, action: str, max_length: int = 300) -> str:
+    """Tool 결과를 포맷팅 (길이 제한)"""
     content_str = str(content)
     
-    if len(content_str) > 500:
-        content_str = content_str[:500] + "\n... (truncated)"
+    if len(content_str) > max_length:
+        content_str = content_str[:max_length] + f"\n... ({len(str(content))} chars total)"
+    
     return f"```\n{content_str}\n```"
 
 
-def chat_stream(message: str, history: List[Dict]) -> Generator[Tuple[List[Dict], str], None, None]:
-    """채팅 메시지 처리 (Streaming)"""
+def build_streaming_response(
+    plan_content: str,
+    step_outputs: List[Dict],
+    current_thinking: str = "",
+    final_answer: str = ""
+) -> str:
+    """
+    실시간 스트리밍 응답 구성
+    
+    Args:
+        plan_content: 실행 계획
+        step_outputs: 완료된 step들의 결과
+        current_thinking: 현재 진행 중인 생각/상태
+        final_answer: 최종 답변 (있을 경우)
+    """
+    parts = []
+    
+    # 1. 실행 계획 (접이식)
+    if plan_content:
+        parts.append(f"<details>\n<summary>📋 실행 계획</summary>\n\n{plan_content}\n</details>")
+    
+    # 2. 완료된 Steps (각각 접이식)
+    if step_outputs:
+        for step in step_outputs:
+            header = step.get("header", "")
+            result = step.get("result", "")
+            if header and result:
+                parts.append(header + result)
+    
+    # 3. 현재 진행 상황 (실시간)
+    if current_thinking and not final_answer:
+        parts.append(f"\n💭 *{current_thinking}*")
+    
+    # 4. 최종 답변
+    if final_answer:
+        if parts:
+            parts.append("\n---\n")
+        parts.append(final_answer)
+    
+    return "\n\n".join(filter(None, parts))
+
+
+def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None, None]:
+    """
+    채팅 메시지 처리 (Real-time Streaming)
+    
+    각 Step의 진행 상황을 실시간으로 채팅창에 표시합니다.
+    """
     state = get_app_state()
     
     if not message.strip():
-        yield history, "메시지를 입력해주세요."
+        yield history
         return
     
     # 파일 목록을 context에 추가
     files_context = state.workspace_manager.get_files_for_prompt()
     full_query = f"{message}\n\n{files_context}"
     
-    # 새 대화 추가
+    # 새 대화 추가 (user 메시지)
     history = history + [
         {"role": "user", "content": message},
         {"role": "assistant", "content": ""}
     ]
-    current_response = ""
-    step_outputs = []
-    thoughts = []
-    plan_content = ""
     
-    yield history, "🔄 처리 중..."
+    # 상태 변수
+    plan_content = ""
+    step_outputs = []
+    current_thinking = ""
+    final_answer = ""
+    current_step_info = {}
+    
+    # 초기 상태 표시
+    yield history
     
     try:
         for step in state.orchestrator.run_stream(full_query):
-            if step.type == StepType.PLANNING:
-                yield history, f"📋 {step.content}"
             
+            # ===== Planning Phase =====
+            if step.type == StepType.PLANNING:
+                current_thinking = step.content
+                history[-1]["content"] = f"📋 *{step.content}*"
+                yield history
+            
+            # ===== Plan Ready =====
             elif step.type == StepType.PLAN_READY:
                 plan_content = step.content
-                yield history, "📋 계획 수립 완료"
+                current_thinking = "계획 수립 완료, 실행 시작..."
+                
+                # 계획 표시
+                response = build_streaming_response(
+                    plan_content=plan_content,
+                    step_outputs=step_outputs,
+                    current_thinking=current_thinking
+                )
+                history[-1]["content"] = response
+                yield history
             
+            # ===== Thinking =====
             elif step.type == StepType.THINKING:
-                thoughts.append(step.content)
-                yield history, f"💭 {step.content}"
+                current_thinking = step.content
+                
+                response = build_streaming_response(
+                    plan_content=plan_content,
+                    step_outputs=step_outputs,
+                    current_thinking=current_thinking
+                )
+                history[-1]["content"] = response
+                yield history
             
+            # ===== Tool Call (시작) =====
             elif step.type == StepType.TOOL_CALL:
-                step_output = f"\n\n<details>\n<summary>🔧 Step {step.step}: {step.tool_name}.{step.action}</summary>\n\n"
-                if thoughts:
-                    step_output += f"💭 **Thought:** {thoughts[-1]}\n\n"
-                step_outputs.append({
-                    "header": step_output, 
+                tool_name = step.tool_name or "unknown"
+                action = step.action or "unknown"
+                
+                # 새 step 시작
+                current_step_info = {
+                    "step": step.step,
+                    "tool_name": tool_name,
+                    "action": action,
+                    "header": f"\n<details open>\n<summary>🔧 Step {step.step}: {tool_name}.{action}</summary>\n\n",
                     "result": "",
-                    "tool_name": step.tool_name,
-                    "action": step.action
-                })
-                yield history, f"🔧 {step.tool_name}.{step.action} 실행 중..."
+                    "status": "running"
+                }
+                
+                # 진행 중 표시 (접이식 열린 상태)
+                temp_outputs = step_outputs + [{
+                    "header": current_step_info["header"],
+                    "result": f"⏳ *실행 중...*\n</details>"
+                }]
+                
+                response = build_streaming_response(
+                    plan_content=plan_content,
+                    step_outputs=temp_outputs,
+                    current_thinking=""
+                )
+                history[-1]["content"] = response
+                yield history
             
+            # ===== Tool Result (완료) =====
             elif step.type == StepType.TOOL_RESULT:
-                if step_outputs:
-                    last_step = step_outputs[-1]
-                    formatted_result = format_tool_result(
-                        step.content, 
-                        last_step.get("tool_name", ""),
-                        last_step.get("action", "")
-                    )
-                    step_outputs[-1]["result"] = f"{formatted_result}\n</details>"
-                yield history, f"✅ {step.tool_name}.{step.action} 완료"
+                tool_name = step.tool_name or current_step_info.get("tool_name", "unknown")
+                action = step.action or current_step_info.get("action", "unknown")
+                
+                # 결과 포맷팅
+                formatted_result = format_tool_result(step.content, tool_name, action)
+                
+                # Step 완료 정보 저장
+                completed_step = {
+                    "header": current_step_info.get("header", f"\n<details>\n<summary>🔧 Step {step.step}: {tool_name}.{action}</summary>\n\n"),
+                    "result": f"✅ 완료\n\n{formatted_result}\n</details>"
+                }
+                step_outputs.append(completed_step)
+                current_step_info = {}
+                
+                # 업데이트
+                response = build_streaming_response(
+                    plan_content=plan_content,
+                    step_outputs=step_outputs,
+                    current_thinking=""
+                )
+                history[-1]["content"] = response
+                yield history
             
+            # ===== Final Answer =====
             elif step.type == StepType.FINAL_ANSWER:
-                response_parts = []
+                final_answer = step.content
                 
-                if plan_content:
-                    response_parts.append(f"<details>\n<summary>📋 실행 계획</summary>\n\n{plan_content}\n</details>")
-                
-                if step_outputs:
-                    steps_md = ""
-                    for s in step_outputs:
-                        steps_md += s["header"] + s["result"]
-                    response_parts.append(steps_md)
-                
-                response_parts.append(step.content)
-                
-                current_response = "\n\n---\n\n".join(filter(None, response_parts))
-                
-                history[-1] = {"role": "assistant", "content": current_response}
-                yield history, "✅ 완료"
+                response = build_streaming_response(
+                    plan_content=plan_content,
+                    step_outputs=step_outputs,
+                    current_thinking="",
+                    final_answer=final_answer
+                )
+                history[-1]["content"] = response
+                yield history
             
+            # ===== Error =====
             elif step.type == StepType.ERROR:
-                current_response = f"❌ **오류 발생**\n\n{step.content}"
-                history[-1] = {"role": "assistant", "content": current_response}
-                yield history, "❌ 오류 발생"
+                error_msg = f"❌ **오류 발생**\n\n{step.content}"
+                
+                response = build_streaming_response(
+                    plan_content=plan_content,
+                    step_outputs=step_outputs,
+                    current_thinking="",
+                    final_answer=error_msg
+                )
+                history[-1]["content"] = response
+                yield history
     
     except Exception as e:
         error_msg = f"❌ **예외 발생**\n\n{str(e)}"
-        history[-1] = {"role": "assistant", "content": error_msg}
-        yield history, f"❌ {str(e)}"
+        history[-1]["content"] = error_msg
+        yield history
     
     state.chat_history = history
 
@@ -284,7 +359,6 @@ def stop_generation():
     """생성 중지"""
     state = get_app_state()
     state.orchestrator.stop()
-    return "⏹️ 중지됨"
 
 
 def clear_chat():
@@ -293,11 +367,11 @@ def clear_chat():
     state.chat_history = []
     state.storage.reset()
     state.system_prompt_history = []
-    return [], "대화가 초기화되었습니다."
+    return []
 
 
 # =============================================================================
-# LLM Settings Functions (Modal)
+# LLM Settings Functions
 # =============================================================================
 
 def load_settings_for_modal():
@@ -305,13 +379,10 @@ def load_settings_for_modal():
     state = get_app_state()
     config = state.llm_config
     
-    # Ollama 모델 목록 가져오기
     connected, models = state.fetch_ollama_models(config.base_url)
     
-    # 모델 선택 목록 생성
     if connected and models:
         model_choices = [m["display"] for m in models]
-        # 현재 모델 찾기
         current_display = config.model
         for m in models:
             if m["name"] == config.model:
@@ -321,11 +392,10 @@ def load_settings_for_modal():
         model_choices = [config.model]
         current_display = config.model
     
-    # URL 상태 표시
-    url_status = "✅" if connected else "❌"
+    url_status = "✅ 연결됨" if connected else "❌ 연결 실패"
     
     return (
-        gr.update(visible=True),  # modal visible
+        gr.update(visible=True),
         config.base_url,
         url_status,
         gr.update(choices=model_choices, value=current_display),
@@ -339,12 +409,10 @@ def load_settings_for_modal():
 
 
 def close_settings_modal():
-    """설정 모달 닫기"""
     return gr.update(visible=False)
 
 
 def on_url_change(url: str):
-    """Ollama URL 변경 시 모델 목록 자동 갱신"""
     state = get_app_state()
     connected, models = state.fetch_ollama_models(url)
     
@@ -358,24 +426,21 @@ def on_url_change(url: str):
                 break
         
         return (
-            "✅",
+            "✅ 연결됨",
             gr.update(choices=model_choices, value=current_display if current_display in model_choices else model_choices[0])
         )
     else:
         return (
-            "❌",
+            "❌ 연결 실패",
             gr.update(choices=[state.llm_config.model], value=state.llm_config.model)
         )
 
 
 def save_settings(url, model_display, temperature, max_tokens, top_p, repeat_penalty, num_ctx, max_steps):
-    """설정 저장"""
     state = get_app_state()
     
-    # 모델 이름 추출 (display에서 실제 이름)
     model_name = model_display.split(" (")[0] if " (" in model_display else model_display
     
-    # 설정 업데이트
     state.update_llm_config(
         base_url=url,
         model=model_name,
@@ -394,8 +459,8 @@ def save_settings(url, model_display, temperature, max_tokens, top_p, repeat_pen
 # File Management Functions
 # =============================================================================
 
-def upload_files(files) -> Tuple[str, str]:
-    """파일 업로드 처리"""
+def upload_files(files):
+    """파일 업로드"""
     state = get_app_state()
     
     if not files:
@@ -413,7 +478,6 @@ def upload_files(files) -> Tuple[str, str]:
 
 
 def get_file_list_html() -> str:
-    """파일 목록 HTML 생성"""
     state = get_app_state()
     files = state.workspace_manager.list_files()
 
@@ -433,13 +497,12 @@ def get_file_list_html() -> str:
 
 
 def get_file_choices() -> List[str]:
-    """파일 선택 목록"""
     state = get_app_state()
     files = state.workspace_manager.list_files()
     return [f.name for f in files]
 
 
-def delete_selected_files(selected: List[str]) -> Tuple[str, str, gr.update]:
+def delete_selected_files(selected: List[str]):
     """선택된 파일 삭제"""
     state = get_app_state()
     
@@ -454,14 +517,14 @@ def delete_selected_files(selected: List[str]) -> Tuple[str, str, gr.update]:
     return get_file_list_html(), f"✅ {deleted}개 파일 삭제됨", gr.update(choices=get_file_choices(), value=[])
 
 
-def delete_all_files() -> Tuple[str, str, gr.update]:
+def delete_all_files():
     """전체 파일 삭제"""
     state = get_app_state()
     count = state.workspace_manager.delete_all_files()
     return get_file_list_html(), f"✅ {count}개 파일 삭제됨", gr.update(choices=[], value=[])
 
 
-def refresh_file_list() -> Tuple[str, gr.update]:
+def refresh_file_list():
     """파일 목록 새로고침"""
     return get_file_list_html(), gr.update(choices=get_file_choices())
 
@@ -471,13 +534,11 @@ def refresh_file_list() -> Tuple[str, gr.update]:
 # =============================================================================
 
 def get_shared_storage_tree() -> str:
-    """SharedStorage 내용을 트리뷰 형태로 HTML 생성"""
     state = get_app_state()
     storage = state.storage
     
     html = "<div style='font-family: monospace; font-size: 13px;'>"
     
-    # Context
     context = storage.get_context()
     html += "<details open><summary><b>📁 Context</b></summary>"
     html += "<div style='margin-left: 20px;'>"
@@ -494,7 +555,6 @@ def get_shared_storage_tree() -> str:
     
     html += "</div></details>"
     
-    # Results
     results = storage.get_results()
     html += f"<details open><summary><b>📁 Results ({len(results)})</b></summary>"
     html += "<div style='margin-left: 20px;'>"
@@ -515,7 +575,6 @@ def get_shared_storage_tree() -> str:
     
     html += "</div></details>"
     
-    # History
     history = storage.get_history()
     html += f"<details><summary><b>📁 History ({len(history)})</b></summary>"
     html += "<div style='margin-left: 20px;'>"
@@ -529,13 +588,12 @@ def get_shared_storage_tree() -> str:
             html += f"<div>{status} {query}...</div>"
     
     html += "</div></details>"
-    
     html += "</div>"
+    
     return html
 
 
 def refresh_shared_storage() -> str:
-    """SharedStorage 새로고침"""
     return get_shared_storage_tree()
 
 
@@ -544,7 +602,6 @@ def refresh_shared_storage() -> str:
 # =============================================================================
 
 def get_history_html() -> str:
-    """대화 히스토리 HTML"""
     state = get_app_state()
     history_data = state.storage.get_history()
     
@@ -570,27 +627,24 @@ def get_history_html() -> str:
     
     return html
 
+
 # =============================================================================
 # Build UI
 # =============================================================================
 
 def create_ui() -> gr.Blocks:
-    """Gradio UI 생성 - Settings Modal 포함"""
+    """Gradio UI 생성"""
     
     state = get_app_state()
     
     with gr.Blocks(title="Multi-Agent Chatbot") as app:
         
-        # =================================================================
-        # Header: 타이틀 + Settings 버튼
-        # =================================================================
+        # Header
         with gr.Row():
             gr.Markdown("# 🤖 Multi-Agent Chatbot")
             settings_btn = gr.Button("⚙️ Settings", scale=1, variant="secondary")
         
-        # =================================================================
-        # Settings Modal (숨김 상태로 시작)
-        # =================================================================
+        # Settings Modal
         with gr.Column(visible=False, elem_classes=["settings-modal"]) as settings_modal:
             gr.Markdown("## ⚙️ LLM Settings")
             
@@ -608,98 +662,59 @@ def create_ui() -> gr.Blocks:
                 label="Model",
                 choices=[state.llm_config.model],
                 value=state.llm_config.model,
-                allow_custom_value=True,
-                info="모델 선택 (특성 정보 포함)"
+                allow_custom_value=True
             )
             
             with gr.Row():
-                temperature_slider = gr.Slider(
-                    minimum=0.0, maximum=2.0, step=0.1,
-                    value=state.llm_config.temperature,
-                    label="Temperature"
-                )
-                max_tokens_slider = gr.Slider(
-                    minimum=256, maximum=4096, step=256,
-                    value=state.llm_config.max_tokens,
-                    label="Max Tokens"
-                )
+                temperature_slider = gr.Slider(0.0, 2.0, 0.1, value=state.llm_config.temperature, label="Temperature")
+                max_tokens_slider = gr.Slider(256, 4096, 256, value=state.llm_config.max_tokens, label="Max Tokens")
             
             with gr.Row():
-                top_p_slider = gr.Slider(
-                    minimum=0.0, maximum=1.0, step=0.05,
-                    value=state.llm_config.top_p,
-                    label="Top-p"
-                )
-                repeat_penalty_slider = gr.Slider(
-                    minimum=1.0, maximum=2.0, step=0.1,
-                    value=state.llm_config.repeat_penalty,
-                    label="Repeat Penalty"
-                )
+                top_p_slider = gr.Slider(0.0, 1.0, 0.05, value=state.llm_config.top_p, label="Top-p")
+                repeat_penalty_slider = gr.Slider(1.0, 2.0, 0.1, value=state.llm_config.repeat_penalty, label="Repeat Penalty")
             
             with gr.Row():
-                num_ctx_slider = gr.Slider(
-                    minimum=2048, maximum=32768, step=1024,
-                    value=state.llm_config.num_ctx,
-                    label="Context Window"
-                )
-                max_steps_slider = gr.Slider(
-                    minimum=1, maximum=20, step=1,
-                    value=state.llm_config.max_steps,
-                    label="Max Steps"
-                )
+                num_ctx_slider = gr.Slider(2048, 32768, 1024, value=state.llm_config.num_ctx, label="Context Window")
+                max_steps_slider = gr.Slider(1, 20, 1, value=state.llm_config.max_steps, label="Max Steps")
             
             with gr.Row():
                 save_btn = gr.Button("💾 Save", variant="primary")
                 cancel_btn = gr.Button("Cancel")
         
-        # =================================================================
-        # Row 1: 채팅 영역
-        # =================================================================
+        # Chat Area
         with gr.Column():
             chatbot = gr.Chatbot(
                 label="대화",
                 elem_classes=["chatbot"],
-                height=400
+                height=500
             )
             
             with gr.Row():
                 msg_input = gr.Textbox(
-                    placeholder="메시지를 입력하세요...",
+                    placeholder="메시지를 입력하세요... (예: sample.c 파일을 읽어서 정적 분석하고 out.md에 저장해줘)",
                     label="",
-                    scale=8,
+                    scale=10,
                     container=False
                 )
                 send_btn = gr.Button("전송", variant="primary", scale=1)
                 stop_btn = gr.Button("중지", variant="stop", scale=1)
-            
-            with gr.Row():
-                clear_btn = gr.Button("🗑️ 대화 초기화", size="sm")
-                status_text = gr.Markdown("Ready")
+                clear_btn = gr.Button("🗑️메시지 삭제", scale=1)
         
         gr.Markdown("---")
         
-        # =================================================================
-        # Row 2: 탭 패널 (LLM Settings 제외)
-        # =================================================================
+        # Tab Panels
         with gr.Tabs():
             
-            # Tab 1: Workspace Files
+            # Workspace Files Tab
             with gr.TabItem("📁 Workspace Files"):
                 with gr.Row():
-                    file_upload = gr.File(
-                        label="파일 업로드",
-                        file_count="multiple",
-                        file_types=None
-                    )
+                    file_upload = gr.File(label="파일 업로드", file_count="multiple", file_types=None)
                     upload_btn = gr.Button("📤 업로드", size="sm")
                 
                 file_list_html = gr.HTML(get_file_list_html())
                 
                 with gr.Row():
-                    file_select = gr.CheckboxGroup(
-                        choices=get_file_choices(),
-                        label="삭제할 파일 선택"
-                    )
+                    file_select = gr.CheckboxGroup(choices=get_file_choices(), label="삭제할 파일 선택")
                 
                 with gr.Row():
                     delete_selected_btn = gr.Button("🗑️ 선택 삭제", size="sm")
@@ -708,74 +723,47 @@ def create_ui() -> gr.Blocks:
                 
                 file_status = gr.Markdown("")
             
-            # Tab 2: SharedStorage
+            # SharedStorage Tab
             with gr.TabItem("💾 SharedStorage"):
                 storage_tree = gr.HTML(get_shared_storage_tree())
                 refresh_storage_btn = gr.Button("🔄 새로고침", size="sm")
             
-            # Tab 3: History
+            # History Tab
             with gr.TabItem("📜 History"):
                 history_html = gr.HTML(get_history_html())
                 refresh_history_btn = gr.Button("🔄 새로고침", size="sm")
-            
+        
         # =================================================================
         # Event Handlers
         # =================================================================
         
-        # Settings Modal events
+        # Settings Modal
         settings_btn.click(
             fn=load_settings_for_modal,
-            outputs=[
-                settings_modal,
-                url_input,
-                url_status,
-                model_dropdown,
-                temperature_slider,
-                max_tokens_slider,
-                top_p_slider,
-                repeat_penalty_slider,
-                num_ctx_slider,
-                max_steps_slider
-            ]
+            outputs=[settings_modal, url_input, url_status, model_dropdown,
+                    temperature_slider, max_tokens_slider, top_p_slider,
+                    repeat_penalty_slider, num_ctx_slider, max_steps_slider]
         )
         
-        cancel_btn.click(
-            fn=close_settings_modal,
-            outputs=[settings_modal]
-        )
+        cancel_btn.click(fn=close_settings_modal, outputs=[settings_modal])
         
-        url_input.change(
-            fn=on_url_change,
-            inputs=[url_input],
-            outputs=[url_status, model_dropdown]
-        )
+        url_input.change(fn=on_url_change, inputs=[url_input], outputs=[url_status, model_dropdown])
         
         save_btn.click(
             fn=save_settings,
-            inputs=[
-                url_input,
-                model_dropdown,
-                temperature_slider,
-                max_tokens_slider,
-                top_p_slider,
-                repeat_penalty_slider,
-                num_ctx_slider,
-                max_steps_slider
-            ],
+            inputs=[url_input, model_dropdown, temperature_slider, max_tokens_slider,
+                   top_p_slider, repeat_penalty_slider, num_ctx_slider, max_steps_slider],
             outputs=[settings_modal]
         )
         
         # Chat events
         def on_chat_complete():
-            return (
-                get_history_html(),
-                get_shared_storage_tree()
-            )
+            return get_history_html(), get_shared_storage_tree()
         
         msg_input.submit(
             fn=chat_stream,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, status_text]
+            outputs=[chatbot]
         ).then(
             fn=lambda: "",
             outputs=[msg_input]
@@ -787,7 +775,7 @@ def create_ui() -> gr.Blocks:
         send_btn.click(
             fn=chat_stream,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, status_text]
+            outputs=[chatbot]
         ).then(
             fn=lambda: "",
             outputs=[msg_input]
@@ -796,16 +784,14 @@ def create_ui() -> gr.Blocks:
             outputs=[history_html, storage_tree]
         )
         
-        stop_btn.click(fn=stop_generation, outputs=[status_text])
-        clear_btn.click(
-            fn=clear_chat, 
-            outputs=[chatbot, status_text]
-        ).then(
+        stop_btn.click(fn=stop_generation)
+        
+        clear_btn.click(fn=clear_chat, outputs=[chatbot]).then(
             fn=on_chat_complete,
             outputs=[history_html, storage_tree]
         )
         
-        # File management events
+        # File management
         upload_btn.click(
             fn=upload_files,
             inputs=[file_upload],
@@ -826,20 +812,13 @@ def create_ui() -> gr.Blocks:
             outputs=[file_list_html, file_status, file_select]
         )
         
-        refresh_files_btn.click(
-            fn=refresh_file_list,
-            outputs=[file_list_html, file_select]
-        )
+        refresh_files_btn.click(fn=refresh_file_list, outputs=[file_list_html, file_select])
         
-        # SharedStorage events
+        # SharedStorage & History
         refresh_storage_btn.click(fn=refresh_shared_storage, outputs=[storage_tree])
-        
-        # History events
         refresh_history_btn.click(fn=get_history_html, outputs=[history_html])
         
-        # =================================================================
-        # Page Load Event - 브라우저 새로고침 시 최신 데이터 로드
-        # =================================================================
+        # Page Load
         def on_page_load():
             return (
                 get_file_list_html(),
@@ -848,10 +827,7 @@ def create_ui() -> gr.Blocks:
                 get_history_html()
             )
         
-        app.load(
-            fn=on_page_load,
-            outputs=[file_list_html, file_select, storage_tree, history_html]
-        )
+        app.load(fn=on_page_load, outputs=[file_list_html, file_select, storage_tree, history_html])
 
     return app
 
@@ -861,9 +837,8 @@ def create_ui() -> gr.Blocks:
 # =============================================================================
 
 def main():
-    """메인 함수"""
     print("=" * 60)
-    print("Multi-Agent Chatbot")
+    print("Multi-Agent Chatbot (with Real-time Streaming)")
     print("=" * 60)
     
     app = create_ui()
@@ -871,7 +846,11 @@ def main():
         server_name="localhost",
         server_port=7860,
         share=False,
-        theme=gr.themes.Soft()
+        css ="""
+            .chatbot .message {
+                transition: all 0.2s ease;
+            }
+            """
     )
 
 
