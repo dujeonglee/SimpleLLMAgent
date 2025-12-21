@@ -30,7 +30,7 @@ from core.orchestrator import Orchestrator, LLMConfig, StepInfo, StepType
 from core.workspace_manager import WorkspaceManager, ConfigManager, FileInfo
 from tools.file_tool import FileTool
 from tools.web_tool import WebTool
-
+from tools.llm_tool import LLMTool
 
 # =============================================================================
 # Global State
@@ -82,6 +82,7 @@ class AppState:
         
         self.registry.register(FileTool(base_path=files_dir, debug_enabled=True))
         self.registry.register(WebTool(debug_enabled=True, use_mock=False))
+        self.registry.register(LLMTool(debug_enabled=True, use_mock=False))
     
     def update_llm_config(self, **kwargs):
         """LLM 설정 업데이트 및 저장"""
