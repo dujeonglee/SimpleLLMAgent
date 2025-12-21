@@ -61,8 +61,25 @@ class ConfigManager:
         
         self.logger.info("ConfigManager 초기화", {"path": config_path})
     
+    def load_initial_llm_config(self) -> LLMConfig:
+        """하드코딩된 기본 설정으로 LLMConfig 생성 및 파일 저장"""
+        config = LLMConfig(
+            model="llama3.2",
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=2048,
+            base_url="http://localhost:11434",
+            timeout=120,
+            repeat_penalty=1.1,
+            num_ctx=4096,
+            max_steps=10
+        )
+        self.save_llm_config(config)
+        self.logger.info("초기 LLM 설정 생성 완료", {"model": config.model})
+        return config
+    
     def load_llm_config(self) -> LLMConfig:
-        """저장된 LLM 설정 로드, 없으면 기본값"""
+        """저장된 LLM 설정 로드, 없으면 초기 설정 생성"""
         try:
             if os.path.exists(self.llm_config_file):
                 with open(self.llm_config_file, "r", encoding="utf-8") as f:
@@ -75,12 +92,12 @@ class ConfigManager:
                 self.logger.info("LLM 설정 로드 완료", {"model": config.model})
                 return config
             else:
-                self.logger.info("저장된 설정 없음, 기본값 사용")
-                return LLMConfig()
+                self.logger.info("저장된 설정 없음, 초기 설정 생성")
+                return self.load_initial_llm_config()
                 
         except Exception as e:
             self.logger.error(f"설정 로드 실패: {str(e)}")
-            return LLMConfig()
+            return self.load_initial_llm_config()
     
     def save_llm_config(self, config: LLMConfig):
         """LLM 설정 저장"""
@@ -100,10 +117,7 @@ class ConfigManager:
     
     def reset_llm_config(self) -> LLMConfig:
         """설정을 기본값으로 리셋"""
-        config = LLMConfig()
-        self.save_llm_config(config)
-        self.logger.info("LLM 설정 리셋")
-        return config
+        return self.load_initial_llm_config()
 
 
 class WorkspaceManager:
@@ -223,7 +237,6 @@ class WorkspaceManager:
             
         except Exception as e:
             self.logger.error(f"파일 목록 조회 실패: {str(e)}")
-        
         return files
     
     def get_file_path(self, filename: str) -> Optional[str]:
