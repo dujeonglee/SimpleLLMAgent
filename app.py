@@ -208,8 +208,10 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
     """
     state = get_app_state()
     
+    state.orchestrator._stopped = False
+
     if not message.strip():
-        yield history
+        yield history, gr.update(interactive=False), gr.update(interactive=True)
         return
     
     # 파일 목록을 context에 추가
@@ -228,18 +230,23 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
     current_thinking = ""
     final_answer = ""
     current_step_info = {}
+    was_stopped = False
     
     # 초기 상태 표시
-    yield history
+    yield history, gr.update(interactive=False), gr.update(interactive=True)
     
     try:
         for step in state.orchestrator.run_stream(full_query):
+            # ===== 중지 체크 =====
+            if state.orchestrator._stopped:
+                was_stopped = True
+                break
             
             # ===== Planning Phase =====
             if step.type == StepType.PLANNING:
                 current_thinking = step.content
                 history[-1]["content"] = f"📋 *{step.content}*"
-                yield history
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
             
             # ===== Plan Ready =====
             elif step.type == StepType.PLAN_READY:
@@ -253,7 +260,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     current_thinking=current_thinking
                 )
                 history[-1]["content"] = response
-                yield history
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
             
             # ===== Thinking =====
             elif step.type == StepType.THINKING:
@@ -265,7 +272,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     current_thinking=current_thinking
                 )
                 history[-1]["content"] = response
-                yield history
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
             
             # ===== Tool Call (시작) =====
             elif step.type == StepType.TOOL_CALL:
@@ -294,7 +301,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     current_thinking=""
                 )
                 history[-1]["content"] = response
-                yield history
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
             
             # ===== Tool Result (완료) =====
             elif step.type == StepType.TOOL_RESULT:
@@ -319,7 +326,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     current_thinking=""
                 )
                 history[-1]["content"] = response
-                yield history
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
             
             # ===== Final Answer =====
             elif step.type == StepType.FINAL_ANSWER:
@@ -332,7 +339,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     final_answer=final_answer
                 )
                 history[-1]["content"] = response
-                yield history
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
             
             # ===== Error =====
             elif step.type == StepType.ERROR:
@@ -345,12 +352,41 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     final_answer=error_msg
                 )
                 history[-1]["content"] = response
-                yield history
+                yield history, gr.update(interactive=True), gr.update(interactive=False)
+        
+        # ===== 중지된 경우 메시지 표시 =====
+        if was_stopped:
+            stop_msg = "⏹️ **사용자에 의해 중지됨**"
+            response = build_streaming_response(
+                plan_content=plan_content,
+                step_outputs=step_outputs,
+                current_thinking="",
+                final_answer=stop_msg
+            )
+            history[-1]["content"] = response
+            yield history, gr.update(interactive=True), gr.update(interactive=False)
     
+    except GeneratorExit:
+        # Gradio가 generator를 중단할 때
+        state.orchestrator._stopped = True
+        stop_msg = "⏹️ **중지됨**"
+        response = build_streaming_response(
+            plan_content=plan_content,
+            step_outputs=step_outputs,
+            current_thinking="",
+            final_answer=stop_msg
+        )
+        history[-1]["content"] = response
+        yield history, gr.update(interactive=True), gr.update(interactive=False)
+
     except Exception as e:
         error_msg = f"❌ **예외 발생**\n\n{str(e)}"
         history[-1]["content"] = error_msg
-        yield history
+        yield history, gr.update(interactive=True), gr.update(interactive=False)
+    
+    finally:
+        # 세션 정리
+        state.orchestrator._stopped = False
     
     state.chat_history = history
 
@@ -696,8 +732,8 @@ def create_ui() -> gr.Blocks:
                     scale=10,
                     container=False
                 )
-                send_btn = gr.Button("▶️전송", variant="primary", scale=1)
-                stop_btn = gr.Button("⏹️중지", variant="stop", scale=1)
+                send_btn = gr.Button("▶️전송", variant="primary", scale=1, interactive=True)
+                stop_btn = gr.Button("⏹️중지", variant="stop", scale=1, interactive=False)
                 clear_btn = gr.Button("🗑️삭제", scale=1)
         
         gr.Markdown("---")
@@ -758,37 +794,37 @@ def create_ui() -> gr.Blocks:
         
         # Chat events
         def on_chat_complete():
-            return get_history_html(), get_shared_storage_tree()
+            return get_history_html(), get_shared_storage_tree(), gr.update(interactive=True), gr.update(interactive=False)
         
         msg_input.submit(
             fn=chat_stream,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot]
+            outputs=[chatbot, send_btn, stop_btn]
         ).then(
             fn=lambda: "",
             outputs=[msg_input]
         ).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree]
+            outputs=[history_html, storage_tree, send_btn, stop_btn]
         )
         
         send_btn.click(
             fn=chat_stream,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot]
+            outputs=[chatbot, send_btn, stop_btn]
         ).then(
             fn=lambda: "",
             outputs=[msg_input]
         ).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree]
+            outputs=[history_html, storage_tree, send_btn, stop_btn]
         )
         
         stop_btn.click(fn=stop_generation)
         
         clear_btn.click(fn=clear_chat, outputs=[chatbot]).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree]
+            outputs=[history_html, storage_tree, send_btn, stop_btn]
         )
         
         # File management
