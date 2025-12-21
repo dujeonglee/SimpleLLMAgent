@@ -45,6 +45,7 @@ class LLMConfig:
     # 고급 옵션
     repeat_penalty: float = 1.1
     num_ctx: int = 4096
+    max_steps: int = 10
     
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -733,101 +734,6 @@ Based on the above results, provide a final answer to the user's query."""
             return json.loads(json_match.group(0))
         
         raise ValueError("JSON not found in response")
-    
-    # =========================================================================
-    # Legacy Methods (kept for compatibility)
-    # =========================================================================
-    
-    def _build_system_prompt(self) -> str:
-        """System prompt 생성"""
-        tools_schema = json.dumps(
-            self.tools.get_all_schemas(),
-            indent=2,
-            ensure_ascii=False
-        )
-        
-        return f"""You are an AI assistant that helps users by using available tools.
-
-## Available Tools
-{tools_schema}
-
-## Response Format
-You must respond in valid JSON format only. No other text before or after the JSON.
-
-1. To use a tool:
-{{
-    "thought": "Why I'm taking this action",
-    "tool_calls": [
-        {{
-            "name": "tool_name",
-            "arguments": {{
-                "action": "action_name",
-                "param1": "value1"
-            }}
-        }}
-    ]
-}}
-
-2. To give final answer (when you have enough information):
-{{
-    "thought": "I have enough information to answer",
-    "tool_calls": null,
-    "content": "Your final answer here"
-}}
-
-## Rules
-- Always respond with valid JSON only
-- Use tools when you need external information (read files, search web, etc.)
-- Give final answer when you have enough information to respond
-- Be concise and accurate
-- One tool call at a time is recommended for clarity
-
-## IMPORTANT: JSON String Format
-- NEVER use triple quotes (\"\"\") in JSON - they are invalid
-- Use \\n for newlines inside strings
-- Escape double quotes as \\"
-- Example for code content: "content": "def hello():\\n    print(\\"Hello\\")"
-"""
-    
-    def _build_user_prompt(self, user_query: str) -> str:
-        """User prompt 생성 (현재 컨텍스트 포함)"""
-        
-        results = self.storage.get_results()
-        
-        if not results:
-            previous_results = "None yet."
-        else:
-            previous_results = ""
-            for r in results:
-                step = r.get('step', '?')
-                tool = r.get('tool', r.get('executor', 'unknown'))
-                action = r.get('action', 'unknown')
-                status = r.get('status', 'unknown')
-                output = str(r.get("output", ""))
-                
-                # 상태 아이콘
-                status_icon = "✅" if status == "success" else "❌"
-                
-                previous_results += f"""
-[Step {step}] {status_icon} {tool}.{action} - {status.upper()}
-  Result: {output}
-"""
-        
-        # 중복 호출 방지 힌트
-        hint = ""
-        if results:
-            last_result = results[-1]
-            if last_result.get("status") == "success":
-                hint = "\n⚠️ IMPORTANT: The previous step was SUCCESSFUL. Do NOT repeat the same action. Proceed to the next step or provide final answer.\n"
-        
-        return f"""## User Query
-{user_query}
-
-## Previous Results
-{previous_results}
-{hint}
-## Your Task
-Decide the next action. If the task is complete, provide final answer. Respond with JSON only."""
     
     def _call_llm_api(self, system_prompt: str, user_prompt: str) -> str:
         """Ollama API 호출"""
