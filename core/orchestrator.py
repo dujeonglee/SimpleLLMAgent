@@ -11,6 +11,7 @@ LLMTool 연동 및 이전 결과 참조 기능 추가.
 
 import json
 import re
+import inspect
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
@@ -246,10 +247,15 @@ class Orchestrator:
         self.logger.info(f"실행 시작: {user_query[:50]}...")
         
         try:
-            # Phase 1: Planning
             yield StepInfo(type=StepType.PLANNING, step=0, content="작업 계획 수립 중...")
             
             plan_response = self._create_plan(user_query)
+            
+            if self._stopped:
+                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                return
+            
             if plan_response.get("direct_answer"):
                 self.storage.complete_session(
                     final_response=plan_response["direct_answer"],
@@ -271,9 +277,7 @@ class Orchestrator:
             
             # Phase 2: Execution
             for planned_step in self._plan:
-                if self._stopped:
-                    break
-                
+
                 self._current_step = planned_step.step
                 planned_step.status = "running"
                 
@@ -283,7 +287,19 @@ class Orchestrator:
                     content=f"Step {self._current_step}: {planned_step.description}"
                 )
                 
+                # LLM 호출 전 중지 체크
+                if self._stopped:
+                    self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                    yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                    return
+                
                 execution_response = self._get_execution_params(user_query, planned_step)
+                
+                # LLM 호출 후 중지 체크
+                if self._stopped:
+                    self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                    yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                    return
                 
                 if execution_response.thought:
                     yield StepInfo(
@@ -294,6 +310,12 @@ class Orchestrator:
                 
                 if execution_response.tool_calls:
                     for tool_call in execution_response.tool_calls:
+                        # Tool 실행 전 중지 체크
+                        if self._stopped:
+                            self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                            return
+                        
                         yield StepInfo(
                             type=StepType.TOOL_CALL,
                             step=self._current_step,
@@ -302,8 +324,14 @@ class Orchestrator:
                             action=tool_call.action
                         )
                         
-                        # Tool 실행 (플레이스홀더 처리 포함)
+                        # Tool 실행
                         result = self._execute_tool(tool_call)
+                        
+                        # Tool 실행 후 중지 체크
+                        if self._stopped:
+                            self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                            return
                         
                         self.storage.add_result(
                             executor=tool_call.name,
@@ -324,6 +352,12 @@ class Orchestrator:
                             tool_name=tool_call.name,
                             action=tool_call.action
                         )
+                    
+                    # inner loop에서 중지된 경우
+                    if self._stopped:
+                        self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                        yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                        return
                 
                 if self.on_step_complete:
                     self.on_step_complete(StepInfo(
@@ -332,12 +366,23 @@ class Orchestrator:
                         content="Step completed"
                     ))
             
+            # 중지된 경우 Final Answer 생성 스킵
+            if self._stopped:
+                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                return
+            
             # Phase 3: Final Answer
             yield StepInfo(
                 type=StepType.THINKING,
                 step=self._current_step + 1,
                 content="최종 응답 생성 중..."
             )
+            
+            if self._stopped:
+                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                return
             
             final_response = self._generate_final_answer(user_query)
             
