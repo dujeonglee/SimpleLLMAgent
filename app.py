@@ -4,14 +4,14 @@ Multi-Agent Chatbot UI
 Gradio 기반 웹 인터페이스
 
 Layout:
+- Header: 타이틀 + Settings 버튼
 - Row 1: 채팅 영역 (대화창, 입력창)
-- Row 2: 탭 패널 (LLM Settings, Workspace Files, SharedStorage, History)
+- Row 2: 탭 패널 (Workspace Files, SharedStorage, History)
+- Modal: LLM Settings (팝업)
 """
 
 import os
 import sys
-import time
-import json
 import warnings
 from datetime import datetime
 from typing import List, Tuple, Generator, Optional, Dict
@@ -61,15 +61,19 @@ class AppState:
             tools=self.registry,
             storage=self.storage,
             llm_config=self.llm_config,
-            max_steps=self.llm_config.max_steps if hasattr(self.llm_config, 'max_steps') else 10,
+            max_steps=self.llm_config.max_steps,
             debug_enabled=True
         )
         
         # 대화 히스토리 (UI용)
         self.chat_history: List[Dict] = []
         
-        # System Prompt 히스토리 (NEW)
+        # System Prompt 히스토리
         self.system_prompt_history: List[Dict] = []
+        
+        # Ollama 연결 상태
+        self.ollama_connected: bool = False
+        self.available_models: List[Dict] = []
     
     def _setup_tools(self):
         """Tools 설정"""
@@ -83,10 +87,20 @@ class AppState:
         """LLM 설정 업데이트 및 저장"""
         self.llm_config.update(**kwargs)
         self.orchestrator.update_llm_config(**kwargs)
+        
+        # max_steps는 orchestrator에 직접 설정
+        if 'max_steps' in kwargs:
+            self.orchestrator.max_steps = kwargs['max_steps']
+        
         self.config_manager.save_llm_config(self.llm_config)
     
-    def get_available_models(self, base_url: str = None) -> List[str]:
-        """Ollama 서버에서 사용 가능한 모델 목록 조회"""
+    def fetch_ollama_models(self, base_url: str = None) -> Tuple[bool, List[Dict]]:
+        """Ollama 서버에서 모델 목록 및 상세 정보 조회
+        
+        Returns:
+            Tuple[bool, List[Dict]]: (연결 성공 여부, 모델 정보 리스트)
+            모델 정보: {"name": str, "size": str, "family": str, "parameters": str}
+        """
         if base_url is None:
             base_url = self.llm_config.base_url
         
@@ -96,14 +110,48 @@ class AppState:
             response.raise_for_status()
             data = response.json()
             
-            models = [model["name"] for model in data.get("models", [])]
-            if models:
-                return sorted(models)
+            models = []
+            for model in data.get("models", []):
+                name = model.get("name", "unknown")
+                size_bytes = model.get("size", 0)
+                details = model.get("details", {})
+                
+                # 크기 포맷팅
+                if size_bytes >= 1024 * 1024 * 1024:
+                    size_str = f"{size_bytes / (1024**3):.1f}GB"
+                else:
+                    size_str = f"{size_bytes / (1024**2):.0f}MB"
+                
+                # 모델 정보 추출
+                family = details.get("family", "unknown")
+                param_size = details.get("parameter_size", "")
+                quantization = details.get("quantization_level", "")
+                
+                # 특성 문자열 생성
+                features = []
+                if param_size:
+                    features.append(param_size)
+                if quantization:
+                    features.append(quantization)
+                if family and family != "unknown":
+                    features.append(family)
+                
+                models.append({
+                    "name": name,
+                    "size": size_str,
+                    "features": ", ".join(features) if features else "N/A",
+                    "display": f"{name} ({', '.join(features) if features else size_str})"
+                })
+            
+            self.ollama_connected = True
+            self.available_models = models
+            return True, models
+            
         except Exception as e:
             print(f"[WARN] Ollama 모델 목록 조회 실패: {e}")
-        
-        # Fallback: 기본 목록
-        return ["llama3.2", "llama3.1", "codellama", "mistral", "gemma2", "qwen2.5"]
+            self.ollama_connected = False
+            self.available_models = []
+            return False, []
     
     def add_system_prompt_history(self, prompt: str, step: int):
         """System Prompt 히스토리 추가"""
@@ -134,7 +182,6 @@ def format_tool_result(content: str, tool_name: str, action: str) -> str:
     """Tool 결과를 포맷팅"""
     content_str = str(content)
     
-    # 일반 결과
     if len(content_str) > 500:
         content_str = content_str[:500] + "\n... (truncated)"
     return f"```\n{content_str}\n```"
@@ -152,15 +199,15 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[Tuple[List[Dict]
     files_context = state.workspace_manager.get_files_for_prompt()
     full_query = f"{message}\n\n{files_context}"
     
-    # 새 대화 추가 (Gradio 6.0 형식)
+    # 새 대화 추가
     history = history + [
         {"role": "user", "content": message},
         {"role": "assistant", "content": ""}
     ]
     current_response = ""
     step_outputs = []
-    thoughts = []  # thought 수집
-    plan_content = ""  # 계획 내용
+    thoughts = []
+    plan_content = ""
     
     yield history, "🔄 처리 중..."
     
@@ -179,7 +226,6 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[Tuple[List[Dict]
             
             elif step.type == StepType.TOOL_CALL:
                 step_output = f"\n\n<details>\n<summary>🔧 Step {step.step}: {step.tool_name}.{step.action}</summary>\n\n"
-                # thought가 있으면 step에 포함
                 if thoughts:
                     step_output += f"💭 **Thought:** {thoughts[-1]}\n\n"
                 step_outputs.append({
@@ -202,21 +248,17 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[Tuple[List[Dict]
                 yield history, f"✅ {step.tool_name}.{step.action} 완료"
             
             elif step.type == StepType.FINAL_ANSWER:
-                # 최종 응답 구성
                 response_parts = []
                 
-                # 계획 내용 추가
                 if plan_content:
                     response_parts.append(f"<details>\n<summary>📋 실행 계획</summary>\n\n{plan_content}\n</details>")
                 
-                # Step 실행 결과 추가
                 if step_outputs:
                     steps_md = ""
                     for s in step_outputs:
                         steps_md += s["header"] + s["result"]
                     response_parts.append(steps_md)
                 
-                # 최종 응답 추가
                 response_parts.append(step.content)
                 
                 current_response = "\n\n---\n\n".join(filter(None, response_parts))
@@ -234,7 +276,6 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[Tuple[List[Dict]
         history[-1] = {"role": "assistant", "content": error_msg}
         yield history, f"❌ {str(e)}"
     
-    # 히스토리 저장
     state.chat_history = history
 
 
@@ -249,96 +290,103 @@ def clear_chat():
     """대화 초기화"""
     state = get_app_state()
     state.chat_history = []
-    state.storage.reset()  # SharedStorage도 초기화
-    state.system_prompt_history = []  # System Prompt 히스토리도 초기화
+    state.storage.reset()
+    state.system_prompt_history = []
     return [], "대화가 초기화되었습니다."
 
 
 # =============================================================================
-# LLM Settings Functions
+# LLM Settings Functions (Modal)
 # =============================================================================
 
-def update_model(model: str) -> str:
-    get_app_state().update_llm_config(model=model)
-    return f"✅ Model: {model}"
-
-def update_temperature(temp: float) -> str:
-    get_app_state().update_llm_config(temperature=temp)
-    return f"✅ Temperature: {temp}"
-
-def update_max_tokens(tokens: int) -> str:
-    get_app_state().update_llm_config(max_tokens=tokens)
-    return f"✅ Max Tokens: {tokens}"
-
-def update_top_p(top_p: float) -> str:
-    get_app_state().update_llm_config(top_p=top_p)
-    return f"✅ Top-p: {top_p}"
-
-def update_repeat_penalty(penalty: float) -> str:
-    get_app_state().update_llm_config(repeat_penalty=penalty)
-    return f"✅ Repeat Penalty: {penalty}"
-
-def update_num_ctx(num_ctx: int) -> str:
-    get_app_state().update_llm_config(num_ctx=num_ctx)
-    return f"✅ Context Window: {num_ctx}"
-
-def update_max_steps(steps: int) -> str:
+def load_settings_for_modal():
+    """설정 모달 열 때 현재 값 로드"""
     state = get_app_state()
-    state.orchestrator.max_steps = steps
-    return f"✅ Max Steps: {steps}"
-
-def update_base_url(url: str) -> str:
-    get_app_state().update_llm_config(base_url=url)
-    return f"✅ Base URL: {url}"
-
-def refresh_models(base_url: str) -> Tuple[gr.update, str]:
-    """모델 목록 새로고침"""
-    state = get_app_state()
+    config = state.llm_config
     
-    # URL 업데이트
-    if base_url != state.llm_config.base_url:
-        state.update_llm_config(base_url=base_url)
+    # Ollama 모델 목록 가져오기
+    connected, models = state.fetch_ollama_models(config.base_url)
     
-    # 모델 목록 조회
-    models = state.get_available_models(base_url)
-    current_model = state.llm_config.model
+    # 모델 선택 목록 생성
+    if connected and models:
+        model_choices = [m["display"] for m in models]
+        # 현재 모델 찾기
+        current_display = config.model
+        for m in models:
+            if m["name"] == config.model:
+                current_display = m["display"]
+                break
+    else:
+        model_choices = [config.model]
+        current_display = config.model
     
-    # 현재 모델이 목록에 없으면 첫 번째 모델로 변경
-    if current_model not in models and models:
-        current_model = models[0]
-        state.update_llm_config(model=current_model)
-    
-    return gr.update(choices=models, value=current_model), f"✅ {len(models)}개 모델 로드됨"
-
-def reset_settings():
-    """설정 초기화"""
-    state = get_app_state()
-    default = LLMConfig()
-    
-    state.update_llm_config(
-        model=default.model,
-        temperature=default.temperature,
-        max_tokens=default.max_tokens,
-        top_p=default.top_p,
-        repeat_penalty=default.repeat_penalty,
-        num_ctx=default.num_ctx,
-        base_url=default.base_url
-    )
-    state.orchestrator.max_steps = 10
-    
-    models = state.get_available_models()
+    # URL 상태 표시
+    url_status = "✅" if connected else "❌"
     
     return (
-        gr.update(choices=models, value=default.model),
-        default.temperature,
-        default.max_tokens,
-        default.top_p,
-        default.repeat_penalty,
-        default.num_ctx,
-        10,
-        default.base_url,
-        "✅ 설정 초기화됨"
+        gr.update(visible=True),  # modal visible
+        config.base_url,
+        url_status,
+        gr.update(choices=model_choices, value=current_display),
+        config.temperature,
+        config.max_tokens,
+        config.top_p,
+        config.repeat_penalty,
+        config.num_ctx,
+        config.max_steps
     )
+
+
+def close_settings_modal():
+    """설정 모달 닫기"""
+    return gr.update(visible=False)
+
+
+def on_url_change(url: str):
+    """Ollama URL 변경 시 모델 목록 자동 갱신"""
+    state = get_app_state()
+    connected, models = state.fetch_ollama_models(url)
+    
+    if connected and models:
+        model_choices = [m["display"] for m in models]
+        current_model = state.llm_config.model
+        current_display = current_model
+        for m in models:
+            if m["name"] == current_model:
+                current_display = m["display"]
+                break
+        
+        return (
+            "✅",
+            gr.update(choices=model_choices, value=current_display if current_display in model_choices else model_choices[0])
+        )
+    else:
+        return (
+            "❌",
+            gr.update(choices=[state.llm_config.model], value=state.llm_config.model)
+        )
+
+
+def save_settings(url, model_display, temperature, max_tokens, top_p, repeat_penalty, num_ctx, max_steps):
+    """설정 저장"""
+    state = get_app_state()
+    
+    # 모델 이름 추출 (display에서 실제 이름)
+    model_name = model_display.split(" (")[0] if " (" in model_display else model_display
+    
+    # 설정 업데이트
+    state.update_llm_config(
+        base_url=url,
+        model=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+        repeat_penalty=repeat_penalty,
+        num_ctx=num_ctx,
+        max_steps=max_steps
+    )
+    
+    return gr.update(visible=False)
 
 
 # =============================================================================
@@ -367,7 +415,7 @@ def get_file_list_html() -> str:
     """파일 목록 HTML 생성"""
     state = get_app_state()
     files = state.workspace_manager.list_files()
-    
+
     if not files:
         return "<p style='color: gray;'>파일이 없습니다.</p>"
     
@@ -408,7 +456,7 @@ def delete_selected_files(selected: List[str]) -> Tuple[str, str, gr.update]:
 def delete_all_files() -> Tuple[str, str, gr.update]:
     """전체 파일 삭제"""
     state = get_app_state()
-    count = state.workspace_manager.clear_all_files()
+    count = state.workspace_manager.delete_all_files()
     return get_file_list_html(), f"✅ {count}개 파일 삭제됨", gr.update(choices=[], value=[])
 
 
@@ -418,7 +466,7 @@ def refresh_file_list() -> Tuple[str, gr.update]:
 
 
 # =============================================================================
-# SharedStorage Functions (NEW)
+# SharedStorage Functions
 # =============================================================================
 
 def get_shared_storage_tree() -> str:
@@ -429,7 +477,7 @@ def get_shared_storage_tree() -> str:
     html = "<div style='font-family: monospace; font-size: 13px;'>"
     
     # Context
-    context = storage.get_context()  # None 또는 Dict
+    context = storage.get_context()
     html += "<details open><summary><b>📁 Context</b></summary>"
     html += "<div style='margin-left: 20px;'>"
     
@@ -474,7 +522,7 @@ def get_shared_storage_tree() -> str:
     if not history:
         html += "<div style='color: gray;'>히스토리 없음</div>"
     else:
-        for i, h in enumerate(history[-5:]):  # 최근 5개만
+        for i, h in enumerate(history[-5:]):
             query = h.get("user_query", "")[:30]
             status = "✅" if h.get("status") == "completed" else "⚠️"
             html += f"<div>{status} {query}...</div>"
@@ -503,7 +551,7 @@ def get_history_html() -> str:
         return "<p style='color: gray;'>히스토리가 없습니다.</p>"
     
     html = ""
-    for i, session in enumerate(reversed(history_data[-10:])):  # 최근 10개
+    for i, session in enumerate(reversed(history_data[-10:])):
         query = session.get("user_query", "")[:50]
         if len(session.get("user_query", "")) > 50:
             query += "..."
@@ -526,23 +574,82 @@ def get_history_html() -> str:
 # =============================================================================
 
 def create_ui() -> gr.Blocks:
-    """Gradio UI 생성 - 2행 레이아웃"""
+    """Gradio UI 생성 - Settings Modal 포함"""
     
-    # 초기 상태 로드
     state = get_app_state()
-    config = state.llm_config
-    
-    # 모델 목록 가져오기
-    available_models = state.get_available_models()
-    current_model = config.model
-    if current_model not in available_models:
-        if available_models:
-            current_model = available_models[0]
-            state.update_llm_config(model=current_model)
     
     with gr.Blocks(title="Multi-Agent Chatbot") as app:
         
-        gr.Markdown("# 🤖 Multi-Agent Chatbot")
+        # =================================================================
+        # Header: 타이틀 + Settings 버튼
+        # =================================================================
+        with gr.Row():
+            gr.Markdown("# 🤖 Multi-Agent Chatbot")
+            settings_btn = gr.Button("⚙️ Settings", scale=1, variant="secondary")
+        
+        # =================================================================
+        # Settings Modal (숨김 상태로 시작)
+        # =================================================================
+        with gr.Column(visible=False, elem_classes=["settings-modal"]) as settings_modal:
+            gr.Markdown("## ⚙️ LLM Settings")
+            
+            with gr.Row():
+                with gr.Column(scale=4):
+                    url_input = gr.Textbox(
+                        label="Ollama URL",
+                        value=state.llm_config.base_url,
+                        placeholder="http://localhost:11434"
+                    )
+                with gr.Column(scale=1):
+                    url_status = gr.Markdown("⏳", elem_id="url-status")
+            
+            model_dropdown = gr.Dropdown(
+                label="Model",
+                choices=[state.llm_config.model],
+                value=state.llm_config.model,
+                allow_custom_value=True,
+                info="모델 선택 (특성 정보 포함)"
+            )
+            
+            with gr.Row():
+                temperature_slider = gr.Slider(
+                    minimum=0.0, maximum=2.0, step=0.1,
+                    value=state.llm_config.temperature,
+                    label="Temperature"
+                )
+                max_tokens_slider = gr.Slider(
+                    minimum=256, maximum=4096, step=256,
+                    value=state.llm_config.max_tokens,
+                    label="Max Tokens"
+                )
+            
+            with gr.Row():
+                top_p_slider = gr.Slider(
+                    minimum=0.0, maximum=1.0, step=0.05,
+                    value=state.llm_config.top_p,
+                    label="Top-p"
+                )
+                repeat_penalty_slider = gr.Slider(
+                    minimum=1.0, maximum=2.0, step=0.1,
+                    value=state.llm_config.repeat_penalty,
+                    label="Repeat Penalty"
+                )
+            
+            with gr.Row():
+                num_ctx_slider = gr.Slider(
+                    minimum=2048, maximum=32768, step=1024,
+                    value=state.llm_config.num_ctx,
+                    label="Context Window"
+                )
+                max_steps_slider = gr.Slider(
+                    minimum=1, maximum=20, step=1,
+                    value=state.llm_config.max_steps,
+                    label="Max Steps"
+                )
+            
+            with gr.Row():
+                save_btn = gr.Button("💾 Save", variant="primary")
+                cancel_btn = gr.Button("Cancel")
         
         # =================================================================
         # Row 1: 채팅 영역
@@ -571,70 +678,11 @@ def create_ui() -> gr.Blocks:
         gr.Markdown("---")
         
         # =================================================================
-        # Row 2: 탭 패널
+        # Row 2: 탭 패널 (LLM Settings 제외)
         # =================================================================
         with gr.Tabs():
             
-            # ---------------------------------------------------------
-            # Tab 1: LLM Settings
-            # ---------------------------------------------------------
-            with gr.TabItem("⚙️ LLM Settings"):
-                with gr.Row():
-                    base_url_input = gr.Textbox(
-                        value=config.base_url,
-                        label="Ollama URL",
-                        scale=2
-                    )
-                    refresh_models_btn = gr.Button("🔄 모델 새로고침", size="sm", scale=1)
-                
-                with gr.Row():
-                    model_dropdown = gr.Dropdown(
-                        choices=available_models,
-                        value=current_model,
-                        label="Model",
-                        allow_custom_value=True
-                    )
-                    temperature_slider = gr.Slider(
-                        minimum=0.0, maximum=2.0, step=0.1,
-                        value=config.temperature,
-                        label="Temperature"
-                    )
-                    max_tokens_slider = gr.Slider(
-                        minimum=256, maximum=4096, step=256,
-                        value=config.max_tokens,
-                        label="Max Tokens"
-                    )
-                
-                with gr.Row():
-                    top_p_slider = gr.Slider(
-                        minimum=0.0, maximum=1.0, step=0.05,
-                        value=config.top_p,
-                        label="Top-p"
-                    )
-                    repeat_penalty_slider = gr.Slider(
-                        minimum=1.0, maximum=2.0, step=0.1,
-                        value=config.repeat_penalty,
-                        label="Repeat Penalty"
-                    )
-                    num_ctx_slider = gr.Slider(
-                        minimum=2048, maximum=8192, step=1024,
-                        value=config.num_ctx,
-                        label="Context Window"
-                    )
-                
-                with gr.Row():
-                    max_steps_slider = gr.Slider(
-                        minimum=1, maximum=20, step=1,
-                        value=10,
-                        label="Max Steps"
-                    )
-                    reset_btn = gr.Button("🔄 Reset to Default", size="sm")
-                
-                settings_status = gr.Markdown("")
-            
-            # ---------------------------------------------------------
-            # Tab 2: Workspace Files
-            # ---------------------------------------------------------
+            # Tab 1: Workspace Files
             with gr.TabItem("📁 Workspace Files"):
                 with gr.Row():
                     file_upload = gr.File(
@@ -659,27 +707,65 @@ def create_ui() -> gr.Blocks:
                 
                 file_status = gr.Markdown("")
             
-            # ---------------------------------------------------------
-            # Tab 3: SharedStorage (NEW)
-            # ---------------------------------------------------------
+            # Tab 2: SharedStorage
             with gr.TabItem("💾 SharedStorage"):
                 storage_tree = gr.HTML(get_shared_storage_tree())
                 refresh_storage_btn = gr.Button("🔄 새로고침", size="sm")
             
-            # ---------------------------------------------------------
-            # Tab 4: History
-            # ---------------------------------------------------------
+            # Tab 3: History
             with gr.TabItem("📜 History"):
                 history_html = gr.HTML(get_history_html())
                 refresh_history_btn = gr.Button("🔄 새로고침", size="sm")
-        
+            
         # =================================================================
         # Event Handlers
         # =================================================================
         
+        # Settings Modal events
+        settings_btn.click(
+            fn=load_settings_for_modal,
+            outputs=[
+                settings_modal,
+                url_input,
+                url_status,
+                model_dropdown,
+                temperature_slider,
+                max_tokens_slider,
+                top_p_slider,
+                repeat_penalty_slider,
+                num_ctx_slider,
+                max_steps_slider
+            ]
+        )
+        
+        cancel_btn.click(
+            fn=close_settings_modal,
+            outputs=[settings_modal]
+        )
+        
+        url_input.change(
+            fn=on_url_change,
+            inputs=[url_input],
+            outputs=[url_status, model_dropdown]
+        )
+        
+        save_btn.click(
+            fn=save_settings,
+            inputs=[
+                url_input,
+                model_dropdown,
+                temperature_slider,
+                max_tokens_slider,
+                top_p_slider,
+                repeat_penalty_slider,
+                num_ctx_slider,
+                max_steps_slider
+            ],
+            outputs=[settings_modal]
+        )
+        
         # Chat events
         def on_chat_complete():
-            """채팅 완료 후 업데이트"""
             return (
                 get_history_html(),
                 get_shared_storage_tree()
@@ -718,31 +804,6 @@ def create_ui() -> gr.Blocks:
             outputs=[history_html, storage_tree]
         )
         
-        # LLM Settings events
-        model_dropdown.change(fn=update_model, inputs=[model_dropdown], outputs=[settings_status])
-        temperature_slider.change(fn=update_temperature, inputs=[temperature_slider], outputs=[settings_status])
-        max_tokens_slider.change(fn=update_max_tokens, inputs=[max_tokens_slider], outputs=[settings_status])
-        top_p_slider.change(fn=update_top_p, inputs=[top_p_slider], outputs=[settings_status])
-        repeat_penalty_slider.change(fn=update_repeat_penalty, inputs=[repeat_penalty_slider], outputs=[settings_status])
-        num_ctx_slider.change(fn=update_num_ctx, inputs=[num_ctx_slider], outputs=[settings_status])
-        max_steps_slider.change(fn=update_max_steps, inputs=[max_steps_slider], outputs=[settings_status])
-        base_url_input.change(fn=update_base_url, inputs=[base_url_input], outputs=[settings_status])
-        
-        refresh_models_btn.click(
-            fn=refresh_models,
-            inputs=[base_url_input],
-            outputs=[model_dropdown, settings_status]
-        )
-        
-        reset_btn.click(
-            fn=reset_settings,
-            outputs=[
-                model_dropdown, temperature_slider, max_tokens_slider,
-                top_p_slider, repeat_penalty_slider, num_ctx_slider,
-                max_steps_slider, base_url_input, settings_status
-            ]
-        )
-        
         # File management events
         upload_btn.click(
             fn=upload_files,
@@ -775,6 +836,22 @@ def create_ui() -> gr.Blocks:
         # History events
         refresh_history_btn.click(fn=get_history_html, outputs=[history_html])
         
+        # =================================================================
+        # Page Load Event - 브라우저 새로고침 시 최신 데이터 로드
+        # =================================================================
+        def on_page_load():
+            return (
+                get_file_list_html(),
+                gr.update(choices=get_file_choices()),
+                get_shared_storage_tree(),
+                get_history_html()
+            )
+        
+        app.load(
+            fn=on_page_load,
+            outputs=[file_list_html, file_select, storage_tree, history_html]
+        )
+
     return app
 
 
