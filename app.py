@@ -696,9 +696,9 @@ def create_ui() -> gr.Blocks:
                     scale=10,
                     container=False
                 )
-                send_btn = gr.Button("전송", variant="primary", scale=1)
-                stop_btn = gr.Button("중지", variant="stop", scale=1)
-                clear_btn = gr.Button("🗑️메시지 삭제", scale=1)
+                send_btn = gr.Button("▶️전송", variant="primary", scale=1)
+                stop_btn = gr.Button("⏹️중지", variant="stop", scale=1)
+                clear_btn = gr.Button("🗑️삭제", scale=1)
         
         gr.Markdown("---")
         
