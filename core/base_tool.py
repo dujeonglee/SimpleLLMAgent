@@ -270,11 +270,6 @@ class BaseTool(ABC):
         if isinstance(output, str) and (output.startswith("✅") or output.startswith("❌")):
             return result
         
-        # 데이터를 반환하는 action은 포맷팅하지 않음 (하위 클래스에서 정의)
-        data_actions = getattr(self, '_data_returning_actions', set())
-        if action in data_actions:
-            return result
-        
         # 리스트나 딕셔너리는 데이터이므로 포맷팅하지 않음
         if isinstance(output, (list, dict)):
             return result
