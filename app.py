@@ -440,7 +440,8 @@ def load_settings_for_modal():
         config.top_p,
         config.repeat_penalty,
         config.num_ctx,
-        config.max_steps
+        config.max_steps,
+        config.timeout
     )
 
 
@@ -472,7 +473,7 @@ def on_url_change(url: str):
         )
 
 
-def save_settings(url, model_display, temperature, max_tokens, top_p, repeat_penalty, num_ctx, max_steps):
+def save_settings(url, model_display, temperature, max_tokens, top_p, repeat_penalty, num_ctx, max_steps, timeout):
     state = get_app_state()
     
     model_name = model_display.split(" (")[0] if " (" in model_display else model_display
@@ -485,7 +486,8 @@ def save_settings(url, model_display, temperature, max_tokens, top_p, repeat_pen
         top_p=top_p,
         repeat_penalty=repeat_penalty,
         num_ctx=num_ctx,
-        max_steps=max_steps
+        max_steps=max_steps,
+        timeout=timeout
     )
     
     return gr.update(visible=False)
@@ -670,7 +672,14 @@ def get_history_html() -> str:
 
 def create_ui() -> gr.Blocks:
     """Gradio UI 생성"""
-    
+
+    def show_toast(message):
+        """Gradio toast 메시지를 표시하는 JavaScript 함수."""
+        js_code = f"""
+        gradioApp().showToast("{message}");
+        """
+        return js_code
+
     state = get_app_state()
     
     with gr.Blocks(title="Multi-Agent Chatbot") as app:
@@ -685,33 +694,41 @@ def create_ui() -> gr.Blocks:
             gr.Markdown("## ⚙️ LLM Settings")
             
             with gr.Row():
-                with gr.Column(scale=4):
-                    url_input = gr.Textbox(
+                url_input = gr.Textbox(
                         label="Ollama URL",
                         value=state.llm_config.base_url,
-                        placeholder="http://localhost:11434"
-                    )
-                with gr.Column(scale=1):
-                    url_status = gr.Markdown("⏳", elem_id="url-status")
-            
-            model_dropdown = gr.Dropdown(
-                label="Model",
-                choices=[state.llm_config.model],
-                value=state.llm_config.model,
-                allow_custom_value=True
-            )
+                        placeholder="http://localhost:11434",
+                        info="ollama 서버 주소를 입력하세요."
+                )
+                model_dropdown = gr.Dropdown(
+                    label="Model",
+                    choices=[state.llm_config.model],
+                    value=state.llm_config.model,
+                    allow_custom_value=True,
+                    info="사용할 LLM 모델을 선택하세요. (예: gpt-3.5-turbo, llama-2-7b)"
+                )
+                timeout_slider = gr.Slider(30.0, 1800.0, 300, value=state.llm_config.timeout, label="Timeout",
+                                           info="LLM 응답 타임아웃 값을 지정합니다.")
+
+            with gr.Row():
+                url_status = gr.Markdown("⏳", elem_id="url-status")
+
             
             with gr.Row():
-                temperature_slider = gr.Slider(0.0, 2.0, 0.1, value=state.llm_config.temperature, label="Temperature")
-                max_tokens_slider = gr.Slider(256, 4096, 256, value=state.llm_config.max_tokens, label="Max Tokens")
+                temperature_slider = gr.Slider(0.0, 2.0, 0.1, value=state.llm_config.temperature, label="Temperature",
+                                               info="LLM의 응답의 무작위성을 조절합니다. 높은 값일수록 답변의 창의적성이 증가 하고 일관성이 감소 합니다.")
+                max_tokens_slider = gr.Slider(256, 4096, 256, value=state.llm_config.max_tokens, label="Max Tokens",
+                                              info="LLM이 생성할 최대 토큰(단어 또는 단어 조각) 수를 지정합니다. 값이 너무 작으면 응답이 잘릴 수 있고, 값이 너무 크면 불필요하게 긴 응답이 생성될 수 있습니다.")
+                num_ctx_slider = gr.Slider(2048, 32768, 1024, value=state.llm_config.num_ctx, label="Context Window",
+                                           info="LLM이 한 번에 처리할 수 있는 최대 컨텍스트 길이(토큰 수)를 지정합니다. 값이 너무 작으면 LLM이 중요한 정보를 놓칠 수 있고, 값이 너무 크면 성능이 저하될 수 있습니다.")
             
             with gr.Row():
-                top_p_slider = gr.Slider(0.0, 1.0, 0.05, value=state.llm_config.top_p, label="Top-p")
-                repeat_penalty_slider = gr.Slider(1.0, 2.0, 0.1, value=state.llm_config.repeat_penalty, label="Repeat Penalty")
-            
-            with gr.Row():
-                num_ctx_slider = gr.Slider(2048, 32768, 1024, value=state.llm_config.num_ctx, label="Context Window")
-                max_steps_slider = gr.Slider(1, 20, 1, value=state.llm_config.max_steps, label="Max Steps")
+                top_p_slider = gr.Slider(0.0, 1.0, 0.05, value=state.llm_config.top_p, label="Top-p",
+                                         info="LLM이 다음 단어를 선택할 때 고려하는 확률 분포의 누적 확률을 조절합니다. 높은 값일수록 다양한 단어를 선택하고 일관성이 감소 합니다.")
+                repeat_penalty_slider = gr.Slider(1.0, 2.0, 0.1, value=state.llm_config.repeat_penalty, label="Repeat Penalty",
+                                                  info="LLM이 이미 생성한 단어를 반복하는 것을 방지합니다. 값이 높을 수록 더 다양한 응답을 생성하고 값이 낮을 수록 더 자연스러운 응답을 생성합니다.")
+                max_steps_slider = gr.Slider(10, 100, 50, value=state.llm_config.max_steps, label="Max Steps",
+                                             info="하나의 요청에 대해서 최대 Step(도구 호출 횟수)을 제한 합니다. 값이 높을 수록 더 많은 도구들을 호출을 할 수 있지만, 그만큼 더 많은 시간이 소요 됩니다.")
             
             with gr.Row():
                 save_btn = gr.Button("💾 Save", variant="primary")
@@ -778,9 +795,9 @@ def create_ui() -> gr.Blocks:
             fn=load_settings_for_modal,
             outputs=[settings_modal, url_input, url_status, model_dropdown,
                     temperature_slider, max_tokens_slider, top_p_slider,
-                    repeat_penalty_slider, num_ctx_slider, max_steps_slider]
+                    repeat_penalty_slider, num_ctx_slider, max_steps_slider, timeout_slider]
         )
-        
+
         cancel_btn.click(fn=close_settings_modal, outputs=[settings_modal])
         
         url_input.change(fn=on_url_change, inputs=[url_input], outputs=[url_status, model_dropdown])
@@ -788,7 +805,7 @@ def create_ui() -> gr.Blocks:
         save_btn.click(
             fn=save_settings,
             inputs=[url_input, model_dropdown, temperature_slider, max_tokens_slider,
-                   top_p_slider, repeat_penalty_slider, num_ctx_slider, max_steps_slider],
+                   top_p_slider, repeat_penalty_slider, num_ctx_slider, max_steps_slider, timeout_slider],
             outputs=[settings_modal]
         )
         
