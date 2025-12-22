@@ -600,9 +600,9 @@ def get_shared_storage_tree() -> str:
     else:
         for i, r in enumerate(results):
             status_icon = "✅" if r.get("status") == "success" else "❌"
-            tool = r.get("tool", "unknown")
+            tool = r.get("executor", "unknown")
             action = r.get("action", "unknown")
-            output_preview = str(r.get("output", ""))[:100]
+            output_preview = str(r.get("output", ""))
             
             html += f"<details><summary>{status_icon} Step {i+1}: {tool}.{action}</summary>"
             html += f"<div style='margin-left: 20px; background: #f5f5f5; padding: 8px; border-radius: 4px;'>"
