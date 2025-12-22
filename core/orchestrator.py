@@ -27,14 +27,14 @@ from core.base_tool import ToolRegistry, ToolResult
 @dataclass
 class LLMConfig:
     """LLM 동적 설정"""
-    model: str = "llama3.2"
-    temperature: float = 0.7
-    top_p: float = 0.9
-    max_tokens: int = 2048
     base_url: str = "http://localhost:11434"
+    model: str = "llama3.2"
     timeout: int = 120
-    repeat_penalty: float = 1.1
+    temperature: float = 0.7
+    max_tokens: int = 2048
     num_ctx: int = 4096
+    top_p: float = 0.9
+    repeat_penalty: float = 1.1
     max_steps: int = 10
     
     def to_dict(self) -> Dict:
