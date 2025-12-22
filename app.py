@@ -608,7 +608,7 @@ def get_shared_storage_tree() -> str:
             
             html += f"<details><summary>{status_icon} Step {i+1}: {tool}.{action}</summary>"
             html += f"<div style='margin-left: 20px; background: #f5f5f5; padding: 8px; border-radius: 4px;'>"
-            html += f"<pre style='white-space: pre-wrap; margin: 0;'>{output_preview}...</pre>"
+            html += f"<pre style='white-space: pre-wrap; margin: 0;'>{output_preview}</pre>"
             html += "</div></details>"
     
     html += "</div></details>"
