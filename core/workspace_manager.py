@@ -64,14 +64,14 @@ class ConfigManager:
     def load_initial_llm_config(self) -> LLMConfig:
         """하드코딩된 기본 설정으로 LLMConfig 생성 및 파일 저장"""
         config = LLMConfig(
-            model="llama3.2",
-            temperature=0.7,
-            top_p=0.9,
-            max_tokens=2048,
             base_url="http://localhost:11434",
+            model="llama3.2",
             timeout=120,
-            repeat_penalty=1.1,
+            temperature=0.7,
+            max_tokens=2048,
             num_ctx=4096,
+            top_p=0.9,
+            repeat_penalty=1.1,
             max_steps=10
         )
         self.save_llm_config(config)
