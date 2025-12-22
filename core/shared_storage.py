@@ -294,11 +294,6 @@ class SharedStorage:
             "final_response_preview": final_response[:200] + "..." if len(final_response) > 200 else final_response
         })
         
-        # 현재 세션 초기화
-        completed_session_id = self._context.session_id
-        self._context = None
-        self._results = []
-        
         return session
     
     def get_history(self) -> List[Dict]:
