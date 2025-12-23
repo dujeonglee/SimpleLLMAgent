@@ -206,22 +206,16 @@ class BaseTool(ABC):
         
         self.logger.info(f"실행 시작: {action}", {"params": params})
         
-        # 1. action 존재 확인
-        if action not in self._actions:
-            error_msg = f"Action '{action}' not found. Available: {list(self._actions.keys())}"
-            self.logger.error(error_msg)
-            return ToolResult.error_result(error_msg)
-        
-        # 2. params 검증
+        # 1. params 검증
         is_valid, error_msg = self.validate_params(action, params)
         if not is_valid:
             self.logger.error(f"파라미터 검증 실패: {error_msg}")
             return ToolResult.error_result(error_msg)
         
-        # 3. 기본값 적용
+        # 2. 기본값 적용
         params = self._apply_defaults(action, params)
         
-        # 4. 실행
+        # 3. 실행
         try:
             result = self._execute_action(action, params)
         except Exception as e:
@@ -229,16 +223,16 @@ class BaseTool(ABC):
             self.logger.error(error_msg, {"exception": type(e).__name__})
             result = ToolResult.error_result(error_msg)
         
-        # 5. 실행 시간 기록
+        # 4. 실행 시간 기록
         elapsed = (datetime.now() - start_time).total_seconds()
         result.metadata["execution_time"] = elapsed
         result.metadata["action"] = action
         
-        # 6. 성공 시 결과 포맷팅 (output이 명확한 메시지가 아닌 경우)
+        # 5. 성공 시 결과 포맷팅 (output이 명확한 메시지가 아닌 경우)
         if result.success:
             result = self._format_success_result(action, params, result)
         
-        # 7. 결과 로깅
+        # 6. 결과 로깅
         if result.success:
             output_preview = self._truncate_output(result.output)
             self.logger.info(f"실행 완료: {action}", {
@@ -323,7 +317,7 @@ class BaseTool(ABC):
             Tuple[bool, Optional[str]]: (성공 여부, 에러 메시지)
         """
         if action not in self._actions:
-            return False, f"Action '{action}' not found"
+            return False, f"Action '{action}' not found. Available: {list(self._actions.keys())}"
         
         schema = self._actions[action]
         
