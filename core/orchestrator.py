@@ -392,11 +392,17 @@ class Orchestrator:
     # =========================================================================
     
     def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
-        """Tool 실행 - [PREVIOUS_RESULT] 플레이스홀더 자동 대체"""
-        
+        """Tool 실행 - 플레이스홀더 자동 대체
+
+        지원하는 플레이스홀더:
+        - [PREVIOUS_RESULT]: 이전 step의 output
+        - [RESULT:result_id]: 특정 result_id의 output
+        """
+        import re
+
         # 파라미터 복사 및 플레이스홀더 처리
         params = tool_call.params.copy()
-        
+
         for key, value in params.items():
             if isinstance(value, str):
                 # [PREVIOUS_RESULT] 플레이스홀더 처리
@@ -404,9 +410,21 @@ class Orchestrator:
                     previous = self.storage.get_last_output()
                     if previous:
                         params[key] = value.replace("[PREVIOUS_RESULT]", str(previous))
-                        self.logger.debug(f"플레이스홀더 대체: {key}")
+                        self.logger.debug(f"플레이스홀더 대체: {key} <- [PREVIOUS_RESULT]")
                     else:
                         self.logger.warn(f"이전 결과가 없어 플레이스홀더 대체 실패: {key}")
+
+                # [RESULT:result_id] 플레이스홀더 처리
+                result_pattern = r'\[RESULT:([a-f0-9]{8})\]'
+                matches = re.findall(result_pattern, value)
+                if matches:
+                    for result_id in matches:
+                        result_output = self.storage.get_output_by_id(result_id)
+                        if result_output is not None:
+                            params[key] = params[key].replace(f"[RESULT:{result_id}]", str(result_output))
+                            self.logger.debug(f"플레이스홀더 대체: {key} <- [RESULT:{result_id}]")
+                        else:
+                            self.logger.warn(f"result_id '{result_id}' 찾을 수 없음: {key}")
         
         self.logger.info(f"Tool 실행: {tool_call.name}.{tool_call.action}", {
             "params_keys": list(params.keys())
@@ -654,19 +672,24 @@ Provide exact parameters for this step. Respond with JSON only."""
             step = r.get('step', '?')
             tool = r.get('tool', r.get('executor', 'unknown'))
             action = r.get('action', 'unknown')
-            status = r.get('status', 'unknown')
+            status = "success" if r.get('success', False) == True else "failure"
             output = str(r.get("output", ""))
+            error = str(r.get("error", ""))
             
             # 출력 길이 제한
-            if len(output) > 1000:
-                output = output[:1000] + "... (truncated)"
+            if len(output) > 100:
+                output = output[:100] + "... (truncated)"
             
             status_icon = "✅" if status == "success" else "❌"
             
             formatted += f"""
 [Step {step}] {status_icon} {tool}.{action} - {status.upper()}
-  Output: {output}
 """
+            if status == "success":
+                formatted += f"""Output: {output}"""
+            else:
+                formatted += f"""Error: {error}"""
+
         return formatted
     
     def _generate_final_answer(self, user_query: str) -> str:
