@@ -90,8 +90,8 @@ def test_planning_prompt():
 
 ## IMPORTANT: Data Flow Between Steps
 - Each step's output becomes available for the next step
-- For llm_tool: It can automatically access the previous step's output
-- For file_tool.write: Use [PREVIOUS_RESULT] placeholder for content from previous step
+- Reference previous results using [RESULT:result_id] format
+- Example: [RESULT:result_001] will be replaced with Step 1's output
 
 ## Response Format (JSON only)
 
@@ -115,7 +115,7 @@ If tools are needed:
             "step": 3,
             "tool_name": "file_tool",
             "action": "write",
-            "description": "Save analysis result to file (uses [PREVIOUS_RESULT])"
+            "description": "Save analysis result to file"
         }}
     ]
 }}
@@ -193,12 +193,19 @@ def test_execution_params_prompt():
         status="pending"
     )
 
-    # tools schema 준비
-    tools_schema = json.dumps(
-        tools.get_all_schemas(),
+    # 현재 도구의 schema만 가져오기
+    current_tool = tools.get(planned_step.tool_name)
+    tool_schema = json.dumps(
+        current_tool.get_schema(),
         indent=2,
         ensure_ascii=False
     )
+
+    # 사용 가능한 결과 포맷팅 (시뮬레이션)
+    available_results = """- [RESULT:result_001]: Step 1 (file_tool.read)
+  Preview: This is example content from the file.
+It contains multiple lines of text.
+We will summarize this content."""
 
     # Execution summary (시뮬레이션)
     execution_summary = """## User Request
@@ -217,27 +224,31 @@ It contains multiple lines of text.
 We will summarize this content.
   Ref: [RESULT:result_001]"""
 
-    # 마지막 출력 미리보기
-    last_output_preview = "This is example content from the file.\nIt contains multiple lines of text.\nWe will summarize this content."
-
     system_prompt = f"""You are executing a planned task. Provide exact parameters for the current step.
 
-## Available Tools
-{tools_schema}
+## Current Tool Schema
+{tool_schema}
 
-## IMPORTANT: Using Previous Step Results
+## Using Previous Results
 
-### For llm_tool:
-- You can OMIT the content parameter (e.g., analyze_content, summarize_content)
-- The tool will automatically use the previous step's output
-- Example: {{"action": "analyze", "analyze_type": "static"}} - content is omitted
+You can reference previous step results using: [RESULT:result_id]
 
-### For file_tool.write:
-- Use [PREVIOUS_RESULT] as a placeholder for write_content
-- Example: {{"action": "write", "write_path": "out.md", "write_content": "[PREVIOUS_RESULT]"}}
+Example for llm_tool.summarize:
+{{
+  "action": "summarize",
+  "summarize_content": "[RESULT:result_001]",
+  "summarize_style": "brief"
+}}
 
-### Last Step Output Preview:
-{last_output_preview if last_output_preview else "(No previous output)"}
+Example for file_tool.write:
+{{
+  "action": "write",
+  "write_path": "output.md",
+  "write_content": "[RESULT:result_002]"
+}}
+
+## Available Results
+{available_results}
 
 ## Response Format
 {{
@@ -256,8 +267,7 @@ We will summarize this content.
 ## Rules
 - Execute ONLY the current step (Step {planned_step.step})
 - Use parameter names with action prefix (e.g., read_path, write_content)
-- For llm_tool: omit content param to use previous result
-- For file_tool.write: use [PREVIOUS_RESULT] for content from previous step
+- Use [RESULT:result_id] to reference previous results
 - Respond with valid JSON only"""
 
     user_prompt = f"""## Execution Context

@@ -392,44 +392,19 @@ class Orchestrator:
     # =========================================================================
     
     def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
-        """Tool 실행 - 플레이스홀더 자동 대체
+        """Tool 실행 - REF 자동 치환
 
-        지원하는 플레이스홀더:
-        - [PREVIOUS_RESULT]: 이전 step의 output
-        - [RESULT:result_id]: 특정 result_id의 output
+        지원하는 참조 형식:
+        - [RESULT:result_id]: 특정 result_id의 output으로 치환
         """
-        import re
-
-        # 파라미터 복사 및 플레이스홀더 처리
+        # 파라미터 복사 및 REF 치환
         params = tool_call.params.copy()
+        params = self._substitute_result_refs(params)
 
-        for key, value in params.items():
-            if isinstance(value, str):
-                # [PREVIOUS_RESULT] 플레이스홀더 처리
-                if "[PREVIOUS_RESULT]" in value:
-                    previous = self.storage.get_last_output()
-                    if previous:
-                        params[key] = value.replace("[PREVIOUS_RESULT]", str(previous))
-                        self.logger.debug(f"플레이스홀더 대체: {key} <- [PREVIOUS_RESULT]")
-                    else:
-                        self.logger.warn(f"이전 결과가 없어 플레이스홀더 대체 실패: {key}")
-
-                # [RESULT:result_id] 플레이스홀더 처리
-                result_pattern = r'\[RESULT:([a-f0-9]{8})\]'
-                matches = re.findall(result_pattern, value)
-                if matches:
-                    for result_id in matches:
-                        result_output = self.storage.get_output_by_id(result_id)
-                        if result_output is not None:
-                            params[key] = params[key].replace(f"[RESULT:{result_id}]", str(result_output))
-                            self.logger.debug(f"플레이스홀더 대체: {key} <- [RESULT:{result_id}]")
-                        else:
-                            self.logger.warn(f"result_id '{result_id}' 찾을 수 없음: {key}")
-        
         self.logger.info(f"Tool 실행: {tool_call.name}.{tool_call.action}", {
             "params_keys": list(params.keys())
         })
-        
+
         result = self.tools.execute(
             tool_name=tool_call.name,
             action=tool_call.action,
@@ -536,8 +511,13 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
         Note: user_query는 API 일관성을 위해 파라미터로 유지하지만,
               실제로는 execution_summary에 이미 포함되어 있음
         """
-        tools_schema = json.dumps(
-            self.tools.get_all_schemas(),
+        # 현재 step의 tool schema만 가져오기
+        current_tool = self.tools.get(planned_step.tool_name)
+        if not current_tool:
+            raise ValueError(f"Tool not found: {planned_step.tool_name}")
+
+        tool_schema = json.dumps(
+            current_tool.get_schema(),
             indent=2,
             ensure_ascii=False
         )
@@ -545,40 +525,40 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
         # get_summary()를 사용하여 실행 컨텍스트 가져오기 (user_query 포함)
         execution_summary = self.storage.get_summary(
             include_all_outputs=True,
-            include_previous_sessions=True,
+            include_previous_sessions=False,  # 이전 세션 제외 (토큰 절약)
             include_plan=True,
             include_session_info=False,
-            max_output_length=300  # 파라미터 결정에는 짧게
+            max_output_length=300
         )
 
-        # 마지막 출력 미리보기 (추가 참고용)
-        last_output_preview = ""
-        results = self.storage.get_results()
-        if results:
-            last_output = self.storage.get_last_output()
-            if isinstance(last_output, str) and len(last_output) > 500:
-                last_output_preview = last_output[:500] + "..."
-            else:
-                last_output_preview = str(last_output)[:500]
+        # 사용 가능한 결과 목록 (REF 형식)
+        available_results = self._format_available_results()
 
         system_prompt = f"""You are executing a planned task. Provide exact parameters for the current step.
 
-## Available Tools
-{tools_schema}
+## Current Tool Schema
+{tool_schema}
 
-## IMPORTANT: Using Previous Step Results
+## Using Previous Results
 
-### For llm_tool:
-- You can OMIT the content parameter (e.g., analyze_content, summarize_content)
-- The tool will automatically use the previous step's output
-- Example: {{"action": "analyze", "analyze_type": "static"}} - content is omitted
+You can reference previous step results using: [RESULT:result_id]
 
-### For file_tool.write:
-- Use [PREVIOUS_RESULT] as a placeholder for write_content
-- Example: {{"action": "write", "write_path": "out.md", "write_content": "[PREVIOUS_RESULT]"}}
+Example for llm_tool.summarize:
+{{
+  "action": "summarize",
+  "summarize_content": "[RESULT:result_001]",
+  "summarize_style": "brief"
+}}
 
-### Last Step Output Preview:
-{last_output_preview if last_output_preview else "(No previous output)"}
+Example for file_tool.write:
+{{
+  "action": "write",
+  "write_path": "output.md",
+  "write_content": "[RESULT:result_002]"
+}}
+
+## Available Results
+{available_results}
 
 ## Response Format
 {{
@@ -597,8 +577,7 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
 ## Rules
 - Execute ONLY the current step (Step {planned_step.step})
 - Use parameter names with action prefix (e.g., read_path, write_content)
-- For llm_tool: omit content param to use previous result
-- For file_tool.write: use [PREVIOUS_RESULT] for content from previous step
+- Reference previous results using [RESULT:result_id] format
 - Respond with valid JSON only"""
 
         user_prompt = f"""## Execution Context
@@ -614,9 +593,74 @@ Provide exact parameters for this step. Respond with JSON only."""
         return self._parse_llm_response(raw_response)
     
     # =========================================================================
-    # Helper Methods (변경 없음 - 기존 코드 유지)
+    # Helper Methods
     # =========================================================================
-    
+
+    def _format_available_results(self) -> str:
+        """사용 가능한 이전 결과를 REF 형식으로 포맷"""
+        results = self.storage.get_results()
+        if not results:
+            return "No previous results available."
+
+        lines = []
+        for r in results:
+            result_dict = r if isinstance(r, dict) else r
+            result_id = result_dict.get('result_id', 'unknown')
+            step = result_dict.get('step', '?')
+            executor = result_dict.get('executor', 'unknown')
+            action = result_dict.get('action', 'unknown')
+            output = result_dict.get('output', '')
+
+            # Output 미리보기
+            if isinstance(output, str) and len(output) > 100:
+                preview = output[:100] + "..."
+            else:
+                preview = str(output)[:100]
+
+            lines.append(
+                f"- [RESULT:{result_id}]: Step {step} ({executor}.{action})\n"
+                f"  Preview: {preview}"
+            )
+
+        return "\n".join(lines)
+
+    def _substitute_result_refs(self, params: Dict) -> Dict:
+        """파라미터의 [RESULT:*] 참조를 실제 값으로 치환"""
+        import re
+
+        def replace_ref(value):
+            if not isinstance(value, str):
+                return value
+
+            # [RESULT:result_id] 패턴 찾기
+            pattern = r'\[RESULT:([^\]]+)\]'
+            matches = re.findall(pattern, value)
+
+            for result_id in matches:
+                output = self.storage.get_output_by_id(result_id)
+                if output is not None:
+                    # 전체 문자열이 REF만 있으면 output을 직접 사용, 아니면 문자열 치환
+                    if value.strip() == f"[RESULT:{result_id}]":
+                        return output
+                    else:
+                        value = value.replace(f"[RESULT:{result_id}]", str(output))
+
+            return value
+
+        # 모든 파라미터 값에 대해 치환 수행
+        substituted = {}
+        for key, value in params.items():
+            if isinstance(value, str):
+                substituted[key] = replace_ref(value)
+            elif isinstance(value, dict):
+                substituted[key] = self._substitute_result_refs(value)
+            elif isinstance(value, list):
+                substituted[key] = [replace_ref(v) if isinstance(v, str) else v for v in value]
+            else:
+                substituted[key] = value
+
+        return substituted
+
     def _parse_plan(self, plan_data: List[Dict]) -> List[PlannedStep]:
         """계획 데이터를 PlannedStep 리스트로 변환"""
         planned_steps = []
