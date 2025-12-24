@@ -247,13 +247,19 @@ class BaseTool(ABC):
             error_msg = f"Execution error: {str(e)}"
             self.logger.error(error_msg, {"exception": type(e).__name__})
             result = ToolResult.error_result(error_msg)
-        
-        # 4. 실행 시간 기록
+
+        # 4. executor/action 정보 설정
+        result.executor = self.name
+        result.action = action
+        result.executor_type = "tool"
+        result.input = params
+
+        # 5. 실행 시간 기록
         elapsed = (datetime.now() - start_time).total_seconds()
         result.metadata["execution_time"] = elapsed
         result.metadata["action"] = action
 
-        # 5. 결과 로깅
+        # 6. 결과 로깅
         if result.success:
             output_preview = self._truncate_output(str(result.output))
             self.logger.info(f"실행 완료: {action}", {
