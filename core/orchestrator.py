@@ -51,31 +51,25 @@ class ToolCall:
     """LLM이 요청한 Tool 호출 정보"""
     name: str
     arguments: Dict
-    
-    KNOWN_ACTIONS = {
-        "file_tool": ["read", "write", "append", "delete", "exists", "list_dir"],
-        "web_tool": ["search", "fetch"],
-        "llm_tool": ["ask", "analyze", "summarize", "transform", "extract"],
-    }
-    
+    known_actions: List[str] = field(default_factory=list)
+
     def __post_init__(self):
         if "." in self.name:
             parts = self.name.split(".", 1)
             self.name = parts[0]
             if "action" not in self.arguments:
                 self.arguments["action"] = parts[1]
-        
+
         if not self.arguments.get("action"):
             inferred_action = self._infer_action_from_prefix()
             if inferred_action:
                 self.arguments["action"] = inferred_action
-    
+
     def _infer_action_from_prefix(self) -> Optional[str]:
-        known_actions = self.KNOWN_ACTIONS.get(self.name, [])
         for key in self.arguments.keys():
             if "_" in key:
                 prefix = key.split("_")[0]
-                if prefix in known_actions:
+                if prefix in self.known_actions:
                     return prefix
         return None
     
@@ -195,15 +189,23 @@ class Orchestrator:
         if llm_tool is None:
             self.logger.debug("llm_tool이 등록되지 않음")
             return
-        
+
         # LLMTool 타입 체크 (duck typing)
         if hasattr(llm_tool, 'set_llm_caller'):
             llm_tool.set_llm_caller(self._call_llm_api)
             self.logger.info("LLMTool에 llm_caller 주입 완료")
-        
+
         if hasattr(llm_tool, 'set_previous_result_getter'):
             llm_tool.set_previous_result_getter(self.storage.get_last_output)
             self.logger.info("LLMTool에 previous_result_getter 주입 완료")
+
+    def _get_known_actions(self) -> Dict[str, List[str]]:
+        """등록된 tool들의 action 정보를 동적으로 가져오기"""
+        known_actions = {}
+        for tool in self.tools.get_all():
+            known_actions[tool.name] = tool.get_action_names()
+        self.logger.debug(f"Known actions 생성 완료: {known_actions}")
+        return known_actions
     
     # =========================================================================
     # Public Methods
@@ -337,7 +339,7 @@ class Orchestrator:
                             executor_type="tool",
                             action=tool_call.action,
                             input_data=tool_call.params,
-                            output=result.output,
+                            output=result,
                             status="success" if result.success else "error",
                             error_message=result.error
                         )
@@ -426,11 +428,6 @@ class Orchestrator:
             params=params
         )
         
-        if result.success:
-            self.logger.info(f"Tool 실행 성공: {tool_call.name}.{tool_call.action}")
-        else:
-            self.logger.error(f"Tool 실행 실패: {result.error}")
-        
         return result
     
     # =========================================================================
@@ -509,7 +506,7 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
         self.logger.debug("Planning 호출", {"query": user_query[:50]})
         
         raw_response = self._call_llm_api(system_prompt, user_prompt)
-        
+
         try:
             parsed = self._extract_json(raw_response)
             self.logger.debug("Plan 생성 완료", {
@@ -744,7 +741,7 @@ Based on the above results, provide a final answer to the user's query."""
                     "num_ctx": self.llm_config.num_ctx
                 }
             }
-            
+
             response = requests.post(url, json=payload, timeout=self.llm_config.timeout)
             response.raise_for_status()
             
@@ -856,26 +853,37 @@ Based on the above results, provide a final answer to the user's query."""
         try:
             sanitized = self._sanitize_json_string(raw_response)
             json_str = self._extract_json_str(sanitized)
-            
+
             if not json_str:
                 return LLMResponse(content=raw_response, raw_response=raw_response)
-            
+
             data = json.loads(json_str)
-            
+
             tool_calls = None
             if data.get("tool_calls"):
-                tool_calls = [
-                    ToolCall(name=tc.get("name", ""), arguments=tc.get("arguments", {}))
-                    for tc in data["tool_calls"]
-                ]
-            
+                all_known_actions = self._get_known_actions()
+                tool_calls = []
+                for tc in data["tool_calls"]:
+                    tool_name = tc.get("name", "")
+                    # tool_name에서 "." 이후 제거 (e.g., "file_tool.read" -> "file_tool")
+                    base_tool_name = tool_name.split(".")[0] if "." in tool_name else tool_name
+                    # 해당 tool의 known_actions만 가져오기
+                    tool_known_actions = all_known_actions.get(base_tool_name, [])
+                    tool_calls.append(
+                        ToolCall(
+                            name=tool_name,
+                            arguments=tc.get("arguments", {}),
+                            known_actions=tool_known_actions
+                        )
+                    )
+
             return LLMResponse(
                 thought=data.get("thought"),
                 tool_calls=tool_calls,
                 content=data.get("content"),
                 raw_response=raw_response
             )
-            
+
         except json.JSONDecodeError as e:
             self.logger.warn(f"JSON 파싱 실패: {str(e)}")
             return LLMResponse(content=raw_response, raw_response=raw_response)
