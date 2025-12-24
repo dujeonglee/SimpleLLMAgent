@@ -601,7 +601,7 @@ def get_shared_storage_tree() -> str:
         html += "<div style='color: gray;'>결과 없음</div>"
     else:
         for i, r in enumerate(results):
-            status_icon = "✅" if r.get("status") == "success" else "❌"
+            status_icon = "✅" if r.get("success", False) else "❌"
             tool = r.get("executor", "unknown")
             action = r.get("action", "unknown")
             output_preview = str(r.get("output", ""))
