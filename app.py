@@ -12,7 +12,6 @@ Gradio 기반 웹 인터페이스 - 실시간 Streaming 개선
 import os
 import sys
 import warnings
-from datetime import datetime
 from typing import List, Generator, Optional, Dict
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="gradio")
@@ -23,8 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.shared_storage import SharedStorage
 from core.base_tool import ToolRegistry
-from core.orchestrator import Orchestrator, LLMConfig, StepInfo, StepType
-from core.workspace_manager import WorkspaceManager, ConfigManager, FileInfo
+from core.orchestrator import Orchestrator, StepType
+from core.workspace_manager import WorkspaceManager, ConfigManager
 from tools.file_tool import FileTool
 from tools.web_tool import WebTool
 from tools.llm_tool import LLMTool
@@ -810,28 +809,36 @@ def create_ui() -> gr.Blocks:
         )
         
         # Chat events
+        def chat_stream_with_clear(message: str, history: List[Dict]):
+            """
+            Wrapper that clears input immediately on submit, then streams chat.
+
+            First yield: clears input field immediately
+            Subsequent yields: stream from chat_stream
+            """
+            # First yield to clear input immediately
+            yield history, gr.update(interactive=False), gr.update(interactive=True), ""
+
+            # Then stream the actual chat
+            for chatbot_update, send_update, stop_update in chat_stream(message, history):
+                yield chatbot_update, send_update, stop_update, ""
+
         def on_chat_complete():
             return get_history_html(), get_shared_storage_tree(), gr.update(interactive=True), gr.update(interactive=False)
         
         msg_input.submit(
-            fn=chat_stream,
+            fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn]
-        ).then(
-            fn=lambda: "",
-            outputs=[msg_input]
+            outputs=[chatbot, send_btn, stop_btn, msg_input]
         ).then(
             fn=on_chat_complete,
             outputs=[history_html, storage_tree, send_btn, stop_btn]
         )
         
         send_btn.click(
-            fn=chat_stream,
+            fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn]
-        ).then(
-            fn=lambda: "",
-            outputs=[msg_input]
+            outputs=[chatbot, send_btn, stop_btn, msg_input]
         ).then(
             fn=on_chat_complete,
             outputs=[history_html, storage_tree, send_btn, stop_btn]
