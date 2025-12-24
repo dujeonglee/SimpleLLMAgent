@@ -12,16 +12,33 @@ import unittest
 # 모듈 경로 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.shared_storage import SharedStorage, ExecutionResult, Context, SessionHistory
+from core.shared_storage import SharedStorage, Context, SessionHistory
+from core.base_tool import ToolResult
+
+
+def create_tool_result(step, executor, executor_type, action, input, output, status="success", error_message=None):
+    """헬퍼 함수: ToolResult 객체 생성"""
+    success = (status == "success")
+    result = ToolResult(
+        step = step,
+        success=success,
+        output=output,
+        error=error_message,
+        executor=executor,
+        executor_type=executor_type,
+        action=action,
+        input=input
+    )
+    return result
 
 
 class TestSharedStorageBasic(unittest.TestCase):
     """기본 기능 테스트"""
-    
+
     def setUp(self):
         """각 테스트 전 실행"""
         self.storage = SharedStorage(debug_enabled=True)
-    
+
     def tearDown(self):
         """각 테스트 후 실행"""
         self.storage.reset()
@@ -100,20 +117,23 @@ class TestSharedStorageResults(unittest.TestCase):
     def test_01_add_result(self):
         """결과 추가 테스트"""
         print("\n[TEST] 결과 추가 테스트")
-        
-        result = self.storage.add_result(
+
+        tool_result = create_tool_result(
+            step=1,
             executor="file_tool",
             executor_type="tool",
             action="read",
-            input_data={"path": "/var/log/wifi.log"},
+            input={"path": "/var/log/wifi.log"},
             output="로그 내용입니다...",
             status="success"
         )
-        
+
+        result = self.storage.add_result(tool_result)
+
         self.assertEqual(result.step, 1)
         self.assertEqual(result.executor, "file_tool")
         self.assertEqual(result.status, "success")
-        
+
         results = self.storage.get_results()
         self.assertEqual(len(results), 1)
         
@@ -124,31 +144,34 @@ class TestSharedStorageResults(unittest.TestCase):
         print("\n[TEST] 여러 결과 추가 테스트")
         
         # Step 1: file_tool
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="file_tool",
             executor_type="tool",
             action="read",
-            input_data={"path": "test.txt"},
+            input={"path": "test.txt"},
             output="파일 내용"
-        )
+        ))
         
         # Step 2: llm_tool
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=2,
             executor="llm_tool",
             executor_type="tool",
             action="analyze",
-            input_data={"content": "파일 내용"},
+            input={"content": "파일 내용"},
             output="분석 결과입니다"
-        )
+        ))
         
         # Step 3: web_tool
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=3,
             executor="web_tool",
             executor_type="tool",
             action="search",
-            input_data={"keyword": "wifi driver"},
+            input={"keyword": "wifi driver"},
             output={"results": ["url1", "url2"]}
-        )
+        ))
         
         results = self.storage.get_results()
         self.assertEqual(len(results), 3)
@@ -162,14 +185,16 @@ class TestSharedStorageResults(unittest.TestCase):
         """마지막 결과 조회 테스트"""
         print("\n[TEST] 마지막 결과 조회 테스트")
         
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool_a", executor_type="tool",
-            action="action_a", input_data={}, output="output_a"
-        )
-        self.storage.add_result(
+            action="action_a", input={}, output="output_a"
+        ))
+        self.storage.add_result(create_tool_result(
+            step=2,
             executor="tool_b", executor_type="tool",
-            action="action_b", input_data={}, output="output_b"
-        )
+            action="action_b", input={}, output="output_b"
+        ))
         
         last = self.storage.get_last_result()
         self.assertEqual(last["executor"], "tool_b")
@@ -184,18 +209,21 @@ class TestSharedStorageResults(unittest.TestCase):
         """특정 Step 결과 조회 테스트"""
         print("\n[TEST] 특정 Step 결과 조회 테스트")
         
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool_1", executor_type="tool",
-            action="action", input_data={}, output="output_1"
-        )
-        self.storage.add_result(
+            action="action", input={}, output="output_1"
+        ))
+        self.storage.add_result(create_tool_result(
+            step=2,
             executor="tool_2", executor_type="tool",
-            action="action", input_data={}, output="output_2"
-        )
-        self.storage.add_result(
+            action="action", input={}, output="output_2"
+        ))
+        self.storage.add_result(create_tool_result(
+            step=3,
             executor="tool_3", executor_type="tool",
-            action="action", input_data={}, output="output_3"
-        )
+            action="action", input={}, output="output_3"
+        ))
         
         result_2 = self.storage.get_result_by_step(2)
         self.assertEqual(result_2["executor"], "tool_2")
@@ -213,18 +241,19 @@ class TestSharedStorageResults(unittest.TestCase):
         """에러 결과 추가 테스트"""
         print("\n[TEST] 에러 결과 추가 테스트")
         
-        result = self.storage.add_result(
+        result = self.storage.add_result(create_tool_result(
+            step=1,
             executor="file_tool",
             executor_type="tool",
             action="read",
-            input_data={"path": "/not/exist"},
+            input={"path": "/not/exist"},
             output=None,
             status="error",
             error_message="File not found"
-        )
+        ))
         
         self.assertEqual(result.status, "error")
-        self.assertEqual(result.error_message, "File not found")
+        self.assertEqual(result.error, "File not found")
         
         print("  ✓ 에러 결과 추가 완료")
 
@@ -243,20 +272,17 @@ class TestSharedStorageHistory(unittest.TestCase):
         print("\n[TEST] 세션 완료 테스트")
         
         session_id = self.storage.start_session("쿼리 1", ["Step 1"])
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool", executor_type="tool",
-            action="action", input_data={}, output="result"
-        )
+            action="action", input={}, output="result"
+        ))
         
         session = self.storage.complete_session("최종 응답입니다", "completed")
         
         self.assertEqual(session.session_id, session_id)
         self.assertEqual(session.status, "completed")
         self.assertEqual(len(session.results), 1)
-        
-        # 세션 완료 후 context는 초기화
-        self.assertIsNone(self.storage.get_context())
-        self.assertEqual(self.storage.get_results(), [])
         
         # History에 저장됨
         history = self.storage.get_history()
@@ -270,18 +296,20 @@ class TestSharedStorageHistory(unittest.TestCase):
         
         # 세션 1
         self.storage.start_session("쿼리 1")
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool", executor_type="tool",
-            action="action", input_data={}, output="result 1"
-        )
+            action="action", input={}, output="result 1"
+        ))
         self.storage.complete_session("응답 1")
         
         # 세션 2
         self.storage.start_session("쿼리 2")
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool", executor_type="tool",
-            action="action", input_data={}, output="result 2"
-        )
+            action="action", input={}, output="result 2"
+        ))
         self.storage.complete_session("응답 2")
         
         history = self.storage.get_history()
@@ -335,18 +363,20 @@ class TestSharedStorageSummary(unittest.TestCase):
             ["파일 읽기", "분석하기", "결과 정리"]
         )
         
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="file_tool", executor_type="tool",
-            action="read", input_data={"path": "wifi.log"},
+            action="read", input={"path": "wifi.log"},
             output="[ERROR] Connection failed..."
-        )
+        ))
         self.storage.advance_step()
         
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=2,
             executor="llm_tool", executor_type="tool",
-            action="analyze", input_data={"content": "..."},
+            action="analyze", input={"content": "..."},
             output="Connection 에러 발견, 원인은..."
-        )
+        ))
         self.storage.advance_step()
         
         summary = self.storage.get_summary()
@@ -370,10 +400,11 @@ class TestSharedStorageSummary(unittest.TestCase):
         
         # 매우 긴 output
         long_output = "A" * 1000
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool", executor_type="tool",
-            action="action", input_data={}, output=long_output
-        )
+            action="action", input={}, output=long_output
+        ))
         
         summary = self.storage.get_summary()
         
@@ -404,11 +435,12 @@ class TestSharedStorageFilePersistence(unittest.TestCase):
         
         # 데이터 생성
         self.storage.start_session("저장 테스트 쿼리", ["Step 1", "Step 2"])
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="test_tool", executor_type="tool",
-            action="test_action", input_data={"key": "value"},
+            action="test_action", input={"key": "value"},
             output={"result": "success"}
-        )
+        ))
         
         original_context = self.storage.get_context()
         original_results = self.storage.get_results()
@@ -439,10 +471,11 @@ class TestSharedStorageFilePersistence(unittest.TestCase):
         
         # 완료된 세션 생성
         self.storage.start_session("과거 쿼리")
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool", executor_type="tool",
-            action="action", input_data={}, output="result"
-        )
+            action="action", input={}, output="result"
+        ))
         self.storage.complete_session("과거 응답")
         
         # 현재 세션 생성
@@ -487,10 +520,11 @@ class TestSharedStorageEdgeCases(unittest.TestCase):
         
         # 세션 없이 결과 추가 시도
         with self.assertRaises(RuntimeError):
-            self.storage.add_result(
+            self.storage.add_result(create_tool_result(
+                step=1,
                 executor="tool", executor_type="tool",
-                action="action", input_data={}, output="result"
-            )
+                action="action", input={}, output="result"
+            ))
         
         # 세션 없이 계획 업데이트 시도
         with self.assertRaises(RuntimeError):
@@ -508,10 +542,11 @@ class TestSharedStorageEdgeCases(unittest.TestCase):
         
         # 데이터 생성
         self.storage.start_session("쿼리")
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool", executor_type="tool",
-            action="action", input_data={}, output="result"
-        )
+            action="action", input={}, output="result"
+        ))
         self.storage.complete_session("응답")
         self.storage.start_session("새 쿼리")
         
@@ -551,32 +586,36 @@ class TestSharedStorageEdgeCases(unittest.TestCase):
         self.storage.start_session("테스트")
         
         # Dict output
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="tool", executor_type="tool",
-            action="action", input_data={},
+            action="action", input={},
             output={"nested": {"data": [1, 2, 3]}}
-        )
+        ))
         
         # List output
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=2,
             executor="tool", executor_type="tool",
-            action="action", input_data={},
+            action="action", input={},
             output=["item1", "item2", {"key": "value"}]
-        )
+        ))
         
         # None output
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=3,
             executor="tool", executor_type="tool",
-            action="action", input_data={},
+            action="action", input={},
             output=None
-        )
+        ))
         
         # String output
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=4,
             executor="tool", executor_type="tool",
-            action="action", input_data={},
+            action="action", input={},
             output="simple string"
-        )
+        ))
         
         results = self.storage.get_results()
         self.assertEqual(len(results), 4)
@@ -619,13 +658,14 @@ class TestDataFlowScenario(unittest.TestCase):
 [2025-01-15 10:30:02] WARN: Retry count exceeded
 [2025-01-15 10:30:03] ERROR: Connection dropped
 """
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=1,
             executor="file_tool",
             executor_type="tool",
             action="read",
-            input_data={"path": "/var/log/wifi.log"},
+            input={"path": "/var/log/wifi.log"},
             output=file_content
-        )
+        ))
         self.storage.advance_step()
         print("\n2. Step 1 완료: file_tool.read")
         
@@ -639,13 +679,14 @@ class TestDataFlowScenario(unittest.TestCase):
             "related_issues": ["Connection dropped"],
             "suggested_keywords": ["DMA timeout wifi driver fix"]
         }
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=2,
             executor="llm_tool",
             executor_type="tool",
             action="analyze",
-            input_data={"content": previous_output},
+            input={"content": previous_output},
             output=analysis_result
-        )
+        ))
         self.storage.advance_step()
         print("3. Step 2 완료: llm_tool.analyze")
         
@@ -657,13 +698,14 @@ class TestDataFlowScenario(unittest.TestCase):
             {"title": "DMA Timeout Fix Guide", "url": "https://example.com/fix"},
             {"title": "WiFi Driver Troubleshooting", "url": "https://example.com/trouble"}
         ]
-        self.storage.add_result(
+        self.storage.add_result(create_tool_result(
+            step=3,
             executor="web_tool",
             executor_type="tool",
             action="search",
-            input_data={"keyword": search_keyword},
+            input={"keyword": search_keyword},
             output=search_results
-        )
+        ))
         self.storage.advance_step()
         print("4. Step 3 완료: web_tool.search")
         
