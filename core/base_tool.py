@@ -54,6 +54,14 @@ class ToolResult:
             metadata=metadata or {}
         )
 
+    def __str__(self) -> str:
+        """ToolResult 객체를 문자열로 표현하는 메서드"""
+        if self.success:
+            return f"✅ Success: Output: {str(self.output)}, Metadata: {str(self.metadata)}"
+        else:
+            return f"❌ Error: {str(self.error)}, Output: {str(self.output)}, Metadata: {str(self.metadata)}"
+
+
 
 @dataclass
 class ActionParam:
@@ -227,14 +235,10 @@ class BaseTool(ABC):
         elapsed = (datetime.now() - start_time).total_seconds()
         result.metadata["execution_time"] = elapsed
         result.metadata["action"] = action
-        
-        # 5. 성공 시 결과 포맷팅 (output이 명확한 메시지가 아닌 경우)
+
+        # 5. 결과 로깅
         if result.success:
-            result = self._format_success_result(action, params, result)
-        
-        # 6. 결과 로깅
-        if result.success:
-            output_preview = self._truncate_output(result.output)
+            output_preview = self._truncate_output(str(result))
             self.logger.info(f"실행 완료: {action}", {
                 "success": True,
                 "output_preview": output_preview,
@@ -245,67 +249,6 @@ class BaseTool(ABC):
                 "error": result.error,
                 "execution_time": f"{elapsed:.3f}s"
             })
-        
-        return result
-    
-    def _format_success_result(self, action: str, params: Dict, result: ToolResult) -> ToolResult:
-        """
-        성공 결과를 LLM이 이해하기 쉬운 메시지로 포맷팅
-        
-        - output이 이미 명확한 메시지(✅로 시작)면 그대로 반환
-        - output이 데이터(파일 내용, 리스트 등)면 그대로 반환
-        - output이 불명확하면 자동 포맷팅
-        
-        하위 클래스에서 오버라이드 가능
-        """
-        output = result.output
-        
-        # 이미 명확한 메시지인 경우 그대로 반환
-        if isinstance(output, str) and (output.startswith("✅") or output.startswith("❌")):
-            return result
-        
-        # 리스트나 딕셔너리는 데이터이므로 포맷팅하지 않음
-        if isinstance(output, (list, dict)):
-            return result
-        
-        # 긴 문자열(줄바꿈 포함)은 데이터로 간주
-        if isinstance(output, str) and (len(output) > 100 or '\n' in output):
-            return result
-        
-        # output이 너무 짧거나 단순한 값인 경우 자동 포맷팅
-        needs_formatting = (
-            output is None or
-            isinstance(output, bool) or
-            isinstance(output, (int, float)) or
-            (isinstance(output, str) and len(output) < 50)
-        )
-        
-        if needs_formatting:
-            # metadata에서 주요 정보 추출
-            details = []
-            metadata = result.metadata or {}
-            
-            # 공통 정보
-            for key in ['filename', 'size', 'count', 'total', 'url', 'title']:
-                if key in metadata:
-                    value = metadata[key]
-                    if key == 'size' and isinstance(value, (int, float)):
-                        value = f"{value} bytes" if value < 1024 else f"{value/1024:.1f}KB"
-                    details.append(f"{key}={value}")
-            
-            # 포맷팅된 메시지 생성
-            formatted_output = f"✅ {self.name}.{action} completed successfully"
-            if details:
-                formatted_output += f" ({', '.join(details)})"
-            if output is not None and output != "" and not isinstance(output, bool):
-                formatted_output += f"\n→ Result: {output}"
-            
-            return ToolResult(
-                success=result.success,
-                output=formatted_output,
-                error=result.error,
-                metadata=result.metadata
-            )
         
         return result
     
