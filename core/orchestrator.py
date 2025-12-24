@@ -327,13 +327,6 @@ class Orchestrator:
                         # Tool 실행
                         result = self._execute_tool(tool_call)
 
-                        # ToolResult에 ExecutionResult 필드 설정
-                        result.step = self._current_step
-                        result.executor = tool_call.name
-                        result.executor_type = "tool"
-                        result.action = tool_call.action
-                        result.input = tool_call.params
-
                         # Tool 실행 후 중지 체크
                         if self._stopped:
                             self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
@@ -424,7 +417,10 @@ class Orchestrator:
             action=tool_call.action,
             params=params
         )
-        
+
+        # ToolResult에 step 정보 설정 (나머지는 BaseTool.execute()에서 자동 설정됨)
+        result.step = self._current_step
+
         return result
     
     # =========================================================================
