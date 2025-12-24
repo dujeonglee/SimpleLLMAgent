@@ -130,7 +130,8 @@ class SharedStorage:
 
         # 핵심 데이터 구조
         self._context: Optional[Context] = None
-        self._results: List[ToolResult] = []
+        self._results: List[ToolResult] = []  # 현재 세션의 results
+        self._all_results: Dict[str, ToolResult] = {}  # 모든 results (result_id → ToolResult)
         self._history: List[SessionHistory] = []
 
         self.logger.info("SharedStorage 초기화 완료")
@@ -207,11 +208,20 @@ class SharedStorage:
             self.logger.error("Step 정보가 기록되지 않음")
             raise RuntimeError("Step info is missing from ToolResult")
 
+        # session_id 설정
+        tool_result.session_id = self._context.session_id
+
+        # 현재 세션의 results에 추가
         self._results.append(tool_result)
+
+        # 영구 저장소에도 추가 (result_id를 키로 사용)
+        self._all_results[tool_result.result_id] = tool_result
 
         # 로그 출력 (output은 truncate)
         output_preview = self._truncate_output(str(tool_result.output))
         self.logger.info(f"결과 추가: Step {tool_result.step} - {tool_result.executor}.{tool_result.action}", {
+            "result_id": tool_result.result_id,
+            "session_id": tool_result.session_id,
             "status": tool_result.status,
             "output_preview": output_preview,
             "error": tool_result.error
@@ -248,7 +258,54 @@ class SharedStorage:
             if r.step == step:
                 return r.output
         return None
-    
+
+    def get_result_by_id(self, result_id: str) -> Optional[Dict]:
+        """
+        result_id로 결과 조회 (모든 세션 검색)
+
+        Args:
+            result_id: 결과 ID
+
+        Returns:
+            Dict: 결과 dict 또는 None
+        """
+        result = self._all_results.get(result_id)
+        if result:
+            return result.to_dict()
+        return None
+
+    def get_output_by_id(self, result_id: str) -> Any:
+        """
+        result_id로 output만 조회
+
+        Args:
+            result_id: 결과 ID
+
+        Returns:
+            Any: output 또는 None
+        """
+        result = self._all_results.get(result_id)
+        if result:
+            return result.output
+        return None
+
+    def get_results_by_session(self, session_id: str) -> List[Dict]:
+        """
+        특정 세션의 모든 결과 조회
+
+        Args:
+            session_id: 세션 ID
+
+        Returns:
+            List[Dict]: 결과 리스트
+        """
+        results = [r for r in self._all_results.values() if r.session_id == session_id]
+        return [r.to_dict() for r in results]
+
+    def list_all_result_ids(self) -> List[str]:
+        """모든 result_id 목록 반환"""
+        return list(self._all_results.keys())
+
     # =========================================================================
     # History 관리
     # =========================================================================
@@ -290,29 +347,48 @@ class SharedStorage:
     # =========================================================================
     # Summary 생성 (LLM 전달용)
     # =========================================================================
-    def get_summary(self, include_all_outputs: bool = True) -> str:
+    def get_summary(self, include_all_outputs: bool = True, include_previous_sessions: bool = False) -> str:
         """
         LLM에 전달할 현재 상태 요약
-        
+
         Args:
             include_all_outputs: True면 모든 결과 포함, False면 마지막 결과만
+            include_previous_sessions: True면 이전 세션의 결과도 포함
         """
         if not self._context:
             return "활성 세션 없음"
-        
-        # 결과 요약 생성
+
+        # 현재 세션 결과 요약 생성
         results_summary = []
         target_results = self._results if include_all_outputs else self._results[-1:] if self._results else []
-        
+
         for r in target_results:
             output_preview = self._truncate_output(r.output)
             status_icon = "✓" if r.status == "success" else "✗"
             results_summary.append(
-                f"[Step {r.step}] {status_icon} {r.executor}.{r.action}\n"
+                f"[Step {r.step}] {status_icon} {r.executor}.{r.action} (ID: {r.result_id})\n"
                 f"  - Input: {json.dumps(r.input, ensure_ascii=False, default=str)}\n"
-                f"  - Output: {output_preview}"
+                f"  - Output: {output_preview}\n"
+                f"  - Reference: [RESULT:{r.result_id}]"
             )
-        
+
+        # 이전 세션 결과 (옵션)
+        previous_results_summary = []
+        if include_previous_sessions and self._all_results:
+            # 현재 세션이 아닌 결과들만
+            other_results = [r for r in self._all_results.values() if r.session_id != self._context.session_id]
+            if other_results:
+                previous_results_summary.append("\n## 이전 세션 결과 (참조 가능)")
+                # 최근 10개만
+                for r in other_results[-10:]:
+                    output_preview = self._truncate_output(r.output)
+                    status_icon = "✓" if r.status == "success" else "✗"
+                    previous_results_summary.append(
+                        f"  {status_icon} {r.executor}.{r.action} (Session: {r.session_id}, ID: {r.result_id})\n"
+                        f"    - Output: {output_preview}\n"
+                        f"    - Reference: [RESULT:{r.result_id}]"
+                    )
+
         # 현재 계획 상태
         plan_status = []
         for i, step in enumerate(self._context.current_plan):
@@ -322,7 +398,7 @@ class SharedStorage:
                 plan_status.append(f"  → {i+1}. {step} (현재)")
             else:
                 plan_status.append(f"    {i+1}. {step}")
-        
+
         summary = f"""## 세션 정보
 - Session ID: {self._context.session_id}
 - 생성 시간: {self._context.created_at}
@@ -335,13 +411,15 @@ class SharedStorage:
 
 ## 실행 결과
 {chr(10).join(results_summary) if results_summary else "(아직 실행된 결과 없음)"}
+{chr(10).join(previous_results_summary) if previous_results_summary else ""}
 """
-        
+
         self.logger.debug("Summary 생성 완료", {
             "session_id": self._context.session_id,
-            "results_count": len(target_results)
+            "results_count": len(target_results),
+            "previous_results_included": include_previous_sessions
         })
-        
+
         return summary
     
     # =========================================================================
@@ -352,19 +430,21 @@ class SharedStorage:
         data = {
             "context": self._context.to_dict() if self._context else None,
             "results": [r.to_dict() for r in self._results],
+            "all_results": {rid: r.to_dict() for rid, r in self._all_results.items()},
             "history": [h.to_dict() for h in self._history],
             "saved_at": datetime.now().isoformat()
         }
-        
+
         # 디렉토리 생성
         os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
-        
+
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-        
+
         self.logger.info(f"파일 저장 완료: {filepath}", {
             "context_exists": self._context is not None,
             "results_count": len(self._results),
+            "all_results_count": len(self._all_results),
             "history_count": len(self._history)
         })
     
@@ -373,11 +453,11 @@ class SharedStorage:
         if not os.path.exists(filepath):
             self.logger.error(f"파일 없음: {filepath}")
             return False
-        
+
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
+
             from core.base_tool import ToolResult
 
             # Context 복원
@@ -389,18 +469,23 @@ class SharedStorage:
             # Results 복원
             self._results = [ToolResult.from_dict(r) for r in data.get("results", [])]
 
+            # All Results 복원
+            all_results_data = data.get("all_results", {})
+            self._all_results = {rid: ToolResult.from_dict(r) for rid, r in all_results_data.items()}
+
             # History 복원
             self._history = [SessionHistory.from_dict(h) for h in data.get("history", [])]
-            
+
             self.logger.info(f"파일 로드 완료: {filepath}", {
                 "context_exists": self._context is not None,
                 "results_count": len(self._results),
+                "all_results_count": len(self._all_results),
                 "history_count": len(self._history),
                 "saved_at": data.get("saved_at")
             })
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"파일 로드 실패: {filepath}", {"error": str(e)})
             return False
@@ -427,13 +512,26 @@ class SharedStorage:
         count = len(self._history)
         self._history = []
         self.logger.info(f"히스토리 초기화: {count}개 세션 삭제")
-    
+
+    def clear_all_results(self):
+        """모든 results 초기화 (영구 저장소 포함)"""
+        count = len(self._all_results)
+        self._all_results = {}
+        self.logger.info(f"모든 Results 초기화: {count}개 결과 삭제")
+
     def reset(self):
-        """전체 초기화"""
+        """전체 초기화 (현재 세션만, all_results는 유지)"""
         self._context = None
         self._results = []
+        self.logger.info("SharedStorage 초기화 완료 (현재 세션만, all_results 보존)")
+
+    def reset_all(self):
+        """완전 초기화 (all_results 포함)"""
+        self._context = None
+        self._results = []
+        self._all_results = {}
         self._history = []
-        self.logger.info("SharedStorage 전체 초기화 완료")
+        self.logger.info("SharedStorage 완전 초기화 완료")
     
     # =========================================================================
     # 디버그 상태 출력
@@ -453,18 +551,28 @@ class SharedStorage:
         else:
             print("  (활성 세션 없음)")
         
-        print("\n[Results]")
+        print("\n[Results - Current Session]")
         if self._results:
             for r in self._results:
-                print(f"  Step {r.step}: {r.executor}.{r.action} - {r.status}")
+                print(f"  Step {r.step}: {r.executor}.{r.action} - {r.status} (ID: {r.result_id})")
         else:
             print("  (결과 없음)")
-        
+
+        print("\n[All Results - Persistent Storage]")
+        if self._all_results:
+            print(f"  총 {len(self._all_results)}개 결과 저장됨")
+            # 최근 5개만 표시
+            recent = list(self._all_results.values())[-5:]
+            for r in recent:
+                print(f"  {r.result_id}: [{r.session_id}] {r.executor}.{r.action} - {r.status}")
+        else:
+            print("  (저장된 결과 없음)")
+
         print("\n[History]")
         if self._history:
             for h in self._history:
                 print(f"  {h.session_id}: {h.user_query[:30]}... - {h.status}")
         else:
             print("  (히스토리 없음)")
-        
+
         print("=" * 60 + "\n")
