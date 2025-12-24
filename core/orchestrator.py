@@ -278,7 +278,6 @@ class Orchestrator:
             
             # Phase 2: Execution
             for planned_step in self._plan:
-
                 self._current_step = planned_step.step
                 planned_step.status = "running"
                 
@@ -327,22 +326,22 @@ class Orchestrator:
                         
                         # Tool 실행
                         result = self._execute_tool(tool_call)
-                        
+
+                        # ToolResult에 ExecutionResult 필드 설정
+                        result.step = self._current_step
+                        result.executor = tool_call.name
+                        result.executor_type = "tool"
+                        result.action = tool_call.action
+                        result.input = tool_call.params
+
                         # Tool 실행 후 중지 체크
                         if self._stopped:
                             self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
                             yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
                             return
-                        
-                        self.storage.add_result(
-                            executor=tool_call.name,
-                            executor_type="tool",
-                            action=tool_call.action,
-                            input_data=tool_call.params,
-                            output=result,
-                            status="success" if result.success else "error",
-                            error_message=result.error
-                        )
+
+                        # ToolResult를 그대로 전달
+                        self.storage.add_result(result)
                         
                         planned_step.status = "completed" if result.success else "failed"
                         
@@ -353,13 +352,11 @@ class Orchestrator:
                             tool_name=tool_call.name,
                             action=tool_call.action
                         )
-                    
                     # inner loop에서 중지된 경우
                     if self._stopped:
                         self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
                         yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
                         return
-                
                 if self.on_step_complete:
                     self.on_step_complete(StepInfo(
                         type=StepType.TOOL_RESULT,
@@ -533,7 +530,7 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
         # 이전 결과 요약 (파라미터 결정에 활용)
         last_output_preview = ""
         if results:
-            last_output = results[-1].get("output", "")
+            last_output = self.storage.get_last_output()
             if isinstance(last_output, str) and len(last_output) > 500:
                 last_output_preview = last_output[:500] + "..."
             else:
