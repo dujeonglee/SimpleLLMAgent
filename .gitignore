@@ -39,6 +39,7 @@ ENV/
 workspace/
 logs/
 *.log
+*.txt
 
 # Test coverage
 .coverage
