@@ -230,7 +230,7 @@ class SharedStorage:
         self._results.append(result)
         
         # 로그 출력 (output은 truncate)
-        output_preview = self._truncate_output(output)
+        output_preview = self._truncate_output(str(output))
         self.logger.info(f"결과 추가: Step {result.step} - {executor}.{action}", {
             "status": status,
             "output_preview": output_preview,
