@@ -20,15 +20,13 @@ class FileTool(BaseTool):
     name = "file_tool"
     description = "Read, write, modify, and delete files within the workspace"
     
-    def __init__(self, base_path: str = None, debug_enabled: bool = True):
+    def __init__(self, base_path: str, debug_enabled: bool = True):
         """
         Args:
             base_path: 파일 작업의 기본 경로 (보안상 이 경로 하위만 접근 가능)
             debug_enabled: 디버그 로깅 활성화
         """
-        self.base_path = base_path or os.getcwd()
-        super().__init__(debug_enabled=debug_enabled)
-        self.logger.info(f"Base path 설정: {self.base_path}")
+        super().__init__(base_path=base_path, debug_enabled=debug_enabled)
     
     def _define_actions(self) -> Dict[str, ActionSchema]:
         return {
@@ -120,22 +118,8 @@ class FileTool(BaseTool):
     # =========================================================================
     # Private Action Implementations
     # =========================================================================
-    
-    def _resolve_path(self, path: str) -> str:
-        """경로를 절대 경로로 변환 (base_path 기준)"""
-        if os.path.isabs(path):
-            return path
-        return os.path.join(self.base_path, path)
-    
-    def _validate_path(self, path: str) -> tuple[bool, str]:
-        """경로가 base_path 하위인지 검증 (보안)"""
-        resolved = os.path.realpath(self._resolve_path(path))
-        base_real = os.path.realpath(self.base_path)
-        
-        if not resolved.startswith(base_real):
-            return False, f"Access denied: path must be under {self.base_path}"
-        return True, resolved
-    
+    # Note: _resolve_path() and _validate_path() methods are inherited from BaseTool
+
     def _read(self, path: str, encoding: str) -> ToolResult:
         """파일 읽기"""
         is_valid, resolved_or_error = self._validate_path(path)

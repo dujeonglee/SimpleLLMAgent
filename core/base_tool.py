@@ -11,6 +11,7 @@ BaseTool Module
 """
 
 import json
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -176,13 +177,22 @@ class BaseTool(ABC):
     # 자식 클래스에서 정의
     name: str = "base_tool"
     description: str = "Base tool description"
-    
-    def __init__(self, debug_enabled: bool = True):
+
+    def __init__(self, base_path: str, debug_enabled: bool = True):
+        """
+        Initialize BaseTool
+
+        Args:
+            base_path: Base directory path for file operations (files can only be accessed within this path for security)
+            debug_enabled: Enable debug logging
+        """
+        self.base_path = base_path
         self.logger = DebugLogger(f"Tool:{self.name}", enabled=debug_enabled)
         self._actions: Dict[str, ActionSchema] = self._define_actions()
-        
+
         self.logger.info(f"Tool 초기화 완료", {
             "name": self.name,
+            "base_path": self.base_path,
             "actions": list(self._actions.keys())
         })
     
@@ -331,9 +341,46 @@ class BaseTool(ABC):
         return self._actions.get(action)
     
     # =========================================================================
+    # Protected Methods - File Path Handling (자식 클래스에서 사용 가능)
+    # =========================================================================
+
+    def _resolve_path(self, path: str) -> str:
+        """
+        Convert path to absolute path based on base_path
+
+        Args:
+            path: File path (absolute or relative)
+
+        Returns:
+            str: Absolute path
+        """
+        if os.path.isabs(path):
+            return path
+        return os.path.join(self.base_path, path)
+
+    def _validate_path(self, path: str) -> Tuple[bool, str]:
+        """
+        Validate that path is within base_path (security check to prevent directory traversal)
+
+        Args:
+            path: File path to validate
+
+        Returns:
+            Tuple[bool, str]: (is_valid, resolved_path_or_error_message)
+                - If valid: (True, resolved_absolute_path)
+                - If invalid: (False, error_message)
+        """
+        resolved = os.path.realpath(self._resolve_path(path))
+        base_real = os.path.realpath(self.base_path)
+
+        if not resolved.startswith(base_real):
+            return False, f"Access denied: path must be under {self.base_path}"
+        return True, resolved
+
+    # =========================================================================
     # Private Methods
     # =========================================================================
-    
+
     def _apply_defaults(self, action: str, params: Dict) -> Dict:
         """optional 파라미터에 기본값 적용"""
         schema = self._actions[action]

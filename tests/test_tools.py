@@ -256,87 +256,91 @@ class TestFileTool(unittest.TestCase):
 
 class TestLLMTool(unittest.TestCase):
     """LLMTool 테스트 (Mock 모드)"""
-    
+
     def setUp(self):
-        self.tool = LLMTool(debug_enabled=True, use_mock=True)
+        self.test_dir = tempfile.mkdtemp()
+        self.tool = LLMTool(base_path=self.test_dir, debug_enabled=True, use_mock=True)
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
     
     def test_01_get_schema(self):
         """스키마 조회"""
         print("\n[TEST] LLMTool 스키마 조회")
-        
+
         schema = self.tool.get_schema()
-        
+
         self.assertEqual(schema["name"], "llm_tool")
-        self.assertIn("ask", schema["actions"])
-        self.assertIn("analyze", schema["actions"])
-        self.assertIn("summarize", schema["actions"])
-        self.assertIn("extract", schema["actions"])
-        
+        self.assertIn("codereview", schema["actions"])
+        self.assertIn("architectureanalysis", schema["actions"])
+        self.assertIn("codedoc", schema["actions"])
+        self.assertIn("staticanalysis", schema["actions"])
+        self.assertIn("codewriter", schema["actions"])
+        self.assertIn("general", schema["actions"])
+
         print("  ✓ 스키마 조회 완료")
         print(f"    Actions: {list(schema['actions'].keys())}")
     
-    def test_02_ask(self):
-        """질문하기 (Mock)"""
-        print("\n[TEST] LLMTool 질문하기 (Mock)")
-        
-        result = self.tool.execute("ask", {
-            "ask_prompt": "Python의 장점은 무엇인가요?"
+    def test_02_general(self):
+        """General query (Mock)"""
+        print("\n[TEST] LLMTool general query (Mock)")
+
+        result = self.tool.execute("general", {
+            "general_prompt": "What are the advantages of Python?"
         })
-        
+
         self.assertTrue(result.success)
         self.assertIsInstance(result.output, str)
         self.assertTrue(len(result.output) > 0)
-        
-        print(f"  ✓ 질문 응답 완료")
+
+        print(f"  ✓ Query completed")
         print(f"    Response length: {len(result.output)}")
-    
-    def test_03_analyze(self):
-        """분석하기 (Mock)"""
-        print("\n[TEST] LLMTool 분석하기 (Mock)")
-        
-        result = self.tool.execute("analyze", {
-            "analyze_content": "[ERROR] DMA timeout at 0x1234\n[WARN] Retry failed",
-            "analyze_instruction": "에러 로그를 분석해주세요"
-        })
-        
-        self.assertTrue(result.success)
-        self.assertIsInstance(result.output, str)
-        
-        print(f"  ✓ 분석 완료")
-        print(f"    Response preview: {result.output[:100]}...")
-    
-    def test_04_summarize(self):
-        """요약하기 (Mock)"""
-        print("\n[TEST] LLMTool 요약하기 (Mock)")
-        
-        long_content = "이것은 매우 긴 내용입니다. " * 50
-        
-        result = self.tool.execute("summarize", {
-            "summarize_content": long_content,
-            "summarize_max_length": 100
-        })
-        
-        self.assertTrue(result.success)
-        self.assertIsInstance(result.output, str)
-        
-        print(f"  ✓ 요약 완료")
-        print(f"    Original: {len(long_content)} -> Summary: {len(result.output)}")
-    
-    def test_05_extract(self):
-        """정보 추출하기 (Mock)"""
-        print("\n[TEST] LLMTool 정보 추출하기 (Mock)")
 
-        result = self.tool.execute("extract", {
-            "extract_content": "[ERROR] Connection failed\n[ERROR] Timeout\n[WARN] Retry",
-            "extract_what": "errors"
+    def test_03_codereview(self):
+        """Code review (Mock)"""
+        print("\n[TEST] LLMTool code review (Mock)")
+
+        result = self.tool.execute("codereview", {
+            "codereview_content": "def add(a, b):\n    return a + b",
+            "codereview_instruction": "Review this function"
+        })
+
+        self.assertTrue(result.success)
+        self.assertIsInstance(result.output, str)
+
+        print(f"  ✓ Code review completed")
+        print(f"    Response preview: {result.output[:100]}...")
+
+    def test_04_staticanalysis(self):
+        """Static analysis (Mock)"""
+        print("\n[TEST] LLMTool static analysis (Mock)")
+
+        result = self.tool.execute("staticanalysis", {
+            "staticanalysis_content": "int* ptr = NULL;\n*ptr = 5;",
+            "staticanalysis_instruction": "Find potential bugs"
+        })
+
+        self.assertTrue(result.success)
+        self.assertIsInstance(result.output, str)
+
+        print(f"  ✓ Static analysis completed")
+        print(f"    Response preview: {result.output[:100]}...")
+
+    def test_05_codewriter(self):
+        """Code writer (Mock)"""
+        print("\n[TEST] LLMTool code writer (Mock)")
+
+        result = self.tool.execute("codewriter", {
+            "codewriter_instruction": "Write a function to reverse a string"
         })
 
         self.assertTrue(result.success)
         self.assertIsInstance(result.output, str)
         self.assertTrue(len(result.output) > 0)
 
-        print(f"  ✓ 추출 완료")
-        print(f"    Extracted: {result.output}")
+        print(f"  ✓ Code generation completed")
+        print(f"    Response preview: {result.output[:100]}...")
 
 
 class TestToolRegistry(unittest.TestCase):
@@ -354,7 +358,7 @@ class TestToolRegistry(unittest.TestCase):
         print("\n[TEST] ToolRegistry 등록 및 조회")
 
         file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
-        llm_tool = LLMTool(debug_enabled=True, use_mock=True)
+        llm_tool = LLMTool(base_path=self.test_dir, debug_enabled=True, use_mock=True)
 
         self.registry.register(file_tool)
         self.registry.register(llm_tool)
@@ -377,7 +381,7 @@ class TestToolRegistry(unittest.TestCase):
         print("\n[TEST] ToolRegistry 모든 스키마 조회")
 
         self.registry.register(FileTool(base_path=self.test_dir))
-        self.registry.register(LLMTool(use_mock=True))
+        self.registry.register(LLMTool(base_path=self.test_dir, use_mock=True))
 
         schemas = self.registry.get_all_schemas()
 
@@ -434,7 +438,7 @@ class TestToolIntegration(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.storage = SharedStorage(debug_enabled=True)
         self.file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
-        self.llm_tool = LLMTool(debug_enabled=True, use_mock=True)
+        self.llm_tool = LLMTool(base_path=self.test_dir, debug_enabled=True, use_mock=True)
     
     def tearDown(self):
         shutil.rmtree(self.test_dir)

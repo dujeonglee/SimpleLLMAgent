@@ -31,7 +31,7 @@ class LLMTool(BaseTool):
 
     def __init__(
         self,
-        base_path: str = None,
+        base_path: str,
         debug_enabled: bool = True,
         use_mock: bool = False,
         llm_caller: Optional[Callable[[str, str], str]] = None,
@@ -47,13 +47,10 @@ class LLMTool(BaseTool):
             llm_caller: LLM API calling function with signature (system_prompt, user_prompt) -> response
             get_previous_result: Function to retrieve previous step results (currently unused)
         """
-        self.base_path = base_path or os.getcwd()
         self.use_mock = use_mock
         self._llm_caller = llm_caller
         self._get_previous_result = get_previous_result
-        super().__init__(debug_enabled=debug_enabled)
-
-        self.logger.info(f"Base path set to: {self.base_path}")
+        super().__init__(base_path=base_path, debug_enabled=debug_enabled)
 
         if use_mock:
             self.logger.warn("Running in MOCK mode")
@@ -193,21 +190,7 @@ class LLMTool(BaseTool):
     # =========================================================================
     # Helper Methods
     # =========================================================================
-
-    def _resolve_path(self, path: str) -> str:
-        """경로를 절대 경로로 변환 (base_path 기준)"""
-        if os.path.isabs(path):
-            return path
-        return os.path.join(self.base_path, path)
-
-    def _validate_path(self, path: str) -> tuple[bool, str]:
-        """경로가 base_path 하위인지 검증 (보안)"""
-        resolved = os.path.realpath(self._resolve_path(path))
-        base_real = os.path.realpath(self.base_path)
-
-        if not resolved.startswith(base_real):
-            return False, f"Access denied: path must be under {self.base_path}"
-        return True, resolved
+    # Note: _resolve_path() and _validate_path() methods are inherited from BaseTool
 
     def _get_content(self, content: Optional[str], file_path: Optional[str]) -> tuple[str, str]:
         """

@@ -321,7 +321,7 @@ class TestOrchestratorExecution(unittest.TestCase):
 
         self.file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
         self.registry.register(self.file_tool)
-        self.registry.register(LLMTool(debug_enabled=True, use_mock=True))
+        self.registry.register(LLMTool(base_path=self.test_dir, debug_enabled=True, use_mock=True))
         
         # 테스트 파일 생성
         self.file_tool.execute("write", {
@@ -588,7 +588,7 @@ class TestOrchestratorIntegration(unittest.TestCase):
         self.registry = ToolRegistry(debug_enabled=True)
 
         self.file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
-        self.llm_tool = LLMTool(debug_enabled=True, use_mock=True)
+        self.llm_tool = LLMTool(base_path=self.test_dir, debug_enabled=True, use_mock=True)
 
         self.registry.register(self.file_tool)
         self.registry.register(self.llm_tool)

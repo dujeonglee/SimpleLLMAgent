@@ -48,13 +48,16 @@ def test_planning_prompt():
     print("=" * 80)
 
     # 기본 설정
+    import tempfile
+    test_dir = tempfile.mkdtemp()
+
     storage = SharedStorage()
     tools = ToolRegistry()
     config_manager = ConfigManager()
 
     # 도구 등록
-    tools.register(FileTool())
-    tools.register(LLMTool())
+    tools.register(FileTool(base_path=test_dir))
+    tools.register(LLMTool(base_path=test_dir))
 
     # Orchestrator 생성
     orchestrator = Orchestrator(
@@ -155,13 +158,16 @@ def test_execution_params_prompt():
     print("=" * 80)
 
     # 기본 설정
+    import tempfile
+    test_dir = tempfile.mkdtemp()
+
     storage = SharedStorage()
     tools = ToolRegistry()
     config_manager = ConfigManager()
 
     # 도구 등록
-    tools.register(FileTool())
-    tools.register(LLMTool())
+    tools.register(FileTool(base_path=test_dir))
+    tools.register(LLMTool(base_path=test_dir))
 
     # Orchestrator 생성
     orchestrator = Orchestrator(
