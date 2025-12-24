@@ -17,7 +17,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, Generator, List, Optional
 
 from core.shared_storage import SharedStorage, DebugLogger
-from core.base_tool import ToolRegistry, ToolResult
+from core.base_tool import ToolRegistry, ToolResult, ActionSchema
 
 
 # =============================================================================
@@ -303,7 +303,27 @@ class Orchestrator:
                         step=self._current_step,
                         content=execution_response.thought
                     )
-                
+
+                # Check if tool_calls is empty - this is an error since we expect exactly one tool call per step
+                if not execution_response.tool_calls:
+                    error_msg = f"LLM failed to generate tool_call for Step {self._current_step} ({planned_step.tool_name}.{planned_step.action}). Expected exactly one tool call."
+                    self.logger.error(error_msg, {
+                        "step": self._current_step,
+                        "planned_tool": planned_step.tool_name,
+                        "planned_action": planned_step.action,
+                        "llm_thought": execution_response.thought
+                    })
+
+                    planned_step.status = "failed"
+
+                    yield StepInfo(
+                        type=StepType.ERROR,
+                        step=self._current_step,
+                        content=f"⚠️ Step {self._current_step} failed: {error_msg}\n\nLLM response: {execution_response.thought or 'No explanation provided'}"
+                    )
+                    # Continue to next step instead of stopping entirely
+                    continue
+
                 if execution_response.tool_calls:
                     for tool_call in execution_response.tool_calls:
                         # Tool 실행 전 중지 체크
@@ -530,6 +550,10 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
         # 사용 가능한 결과 목록 (REF 형식)
         available_results = self._format_available_results()
 
+        # 현재 action의 schema를 기반으로 response format 생성
+        action_schema = current_tool.get_action_schema(planned_step.action)
+        response_format = self._generate_response_format(planned_step, action_schema)
+
         system_prompt = f"""You are executing a planned task. Provide exact parameters for the current step.
 
 ## Current Tool Schema
@@ -539,11 +563,11 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
 
 You can reference previous step results using: [RESULT:result_id]
 
-Example for llm_tool.summarize:
+Example for llm_tool.staticanalysis:
 {{
-  "action": "summarize",
-  "summarize_content": "[RESULT:result_001]",
-  "summarize_style": "brief"
+  "action": "staticanalysis",
+  "staticanalysis_content": "[RESULT:result_001]",
+  "staticanalysis_instruction": "Find memory leaks"
 }}
 
 Example for file_tool.write:
@@ -556,24 +580,15 @@ Example for file_tool.write:
 ## Available Previous Step Results
 {available_results}
 
-## Response Format
-{{
-    "thought": "Why these parameters",
-    "tool_calls": [
-        {{
-            "name": "{planned_step.tool_name}",
-            "arguments": {{
-                "action": "{planned_step.action}",
-                ... parameters ...
-            }}
-        }}
-    ]
-}}
+## Response Format for Current Step
+{response_format}
 
 ## Rules
 - Execute ONLY the current step (Step {planned_step.step})
+- You MUST generate exactly ONE tool_call for this step
 - Use parameter names with action prefix (e.g., read_path, write_content)
-- Reference previous results using [RESULT:result_id] format
+- Reference previous results using [RESULT:result_id] format when appropriate
+- All required parameters must be provided
 - Respond with valid JSON only"""
 
         user_prompt = f"""## Execution Context
@@ -619,6 +634,77 @@ Provide exact parameters for this step. Respond with JSON only."""
             )
 
         return "\n".join(lines)
+
+    def _generate_response_format(self, planned_step: PlannedStep, action_schema: Optional[ActionSchema]) -> str:
+        """
+        Generate response format template based on the action schema
+
+        Args:
+            planned_step: The planned step to execute
+            action_schema: The ActionSchema for the current action
+
+        Returns:
+            str: JSON template showing the expected response format
+        """
+        if not action_schema:
+            # Fallback to generic format if schema not found
+            return f"""{{
+    "thought": "Brief explanation of parameter choices",
+    "tool_calls": [
+        {{
+            "name": "{planned_step.tool_name}",
+            "arguments": {{
+                "action": "{planned_step.action}",
+                ... parameters ...
+            }}
+        }}
+    ]
+}}"""
+
+        # Build parameter examples from schema
+        param_examples = {}
+        param_examples["action"] = planned_step.action
+
+        for param in action_schema.params:
+            param_name = param.name
+            param_desc = param.description
+
+            # Generate example value based on description
+            if "path" in param_name.lower() or "file" in param_name.lower():
+                example_value = '"example.txt"'
+            elif "content" in param_name.lower():
+                example_value = '"[RESULT:result_xxx]" or "actual content"'
+            elif param.param_type == "int":
+                example_value = "100"
+            elif param.param_type == "bool":
+                example_value = "true"
+            else:
+                example_value = f'"<{param_desc[:50]}>"' if param_desc else '"example value"'
+
+            # Mark required parameters
+            if param.required:
+                param_examples[param_name] = f"{example_value}  // REQUIRED"
+            else:
+                param_examples[param_name] = f"{example_value}  // optional"
+
+        # Format as JSON with comments
+        param_lines = []
+        for key, value in param_examples.items():
+            param_lines.append(f'                "{key}": {value}')
+
+        params_str = ",\n".join(param_lines)
+
+        return f"""{{
+    "thought": "Brief explanation of why these specific parameters are needed for this step",
+    "tool_calls": [
+        {{
+            "name": "{planned_step.tool_name}",
+            "arguments": {{
+{params_str}
+            }}
+        }}
+    ]
+}}"""
 
     def _substitute_result_refs(self, params: Dict) -> Dict:
         """파라미터의 [RESULT:*] 참조를 실제 값으로 치환"""
