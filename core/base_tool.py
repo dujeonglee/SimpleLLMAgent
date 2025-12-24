@@ -26,13 +26,13 @@ from .shared_storage import DebugLogger
 @dataclass
 class ToolResult:
     """Tool 실행 결과 (ExecutionResult와 통합)"""
+    success: bool                    # 성공 여부
+    output: Any                      # 다음 step에서 사용할 데이터
     step: int = 0                    # 실행 step 번호
     executor: str = ""               # tool 또는 agent 이름
     executor_type: str = "tool"      # "tool" 또는 "agent"
     action: str = ""                 # 수행한 action
     input: Dict[str, Any] = field(default_factory=dict)  # 입력 파라미터
-    success: bool                    # 성공 여부
-    output: Any                      # 다음 step에서 사용할 데이터
     error: Optional[str] = None      # 에러 메시지 (실패 시)
     metadata: Dict = field(default_factory=dict)  # 부가 정보
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
