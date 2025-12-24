@@ -530,33 +530,41 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
             return {"direct_answer": f"계획 수립 중 오류가 발생했습니다: {str(e)}"}
     
     def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> LLMResponse:
-        """계획된 step 실행을 위한 정확한 파라미터 결정"""
+        """
+        계획된 step 실행을 위한 정확한 파라미터 결정
+
+        Note: user_query는 API 일관성을 위해 파라미터로 유지하지만,
+              실제로는 execution_summary에 이미 포함되어 있음
+        """
         tools_schema = json.dumps(
             self.tools.get_all_schemas(),
             indent=2,
             ensure_ascii=False
         )
-        
-        results = self.storage.get_results()
-        previous_results = self._format_previous_results(results)
-        plan_status = self._format_plan_with_status()
-        
-        # 이전 결과 요약 (파라미터 결정에 활용)
+
+        # get_summary()를 사용하여 실행 컨텍스트 가져오기 (user_query 포함)
+        execution_summary = self.storage.get_summary(
+            include_all_outputs=True,
+            include_previous_sessions=True,
+            include_plan=True,
+            include_session_info=False,
+            max_output_length=300  # 파라미터 결정에는 짧게
+        )
+
+        # 마지막 출력 미리보기 (추가 참고용)
         last_output_preview = ""
+        results = self.storage.get_results()
         if results:
             last_output = self.storage.get_last_output()
             if isinstance(last_output, str) and len(last_output) > 500:
                 last_output_preview = last_output[:500] + "..."
             else:
                 last_output_preview = str(last_output)[:500]
-        
+
         system_prompt = f"""You are executing a planned task. Provide exact parameters for the current step.
 
 ## Available Tools
 {tools_schema}
-
-## Current Plan Status
-{plan_status}
 
 ## IMPORTANT: Using Previous Step Results
 
@@ -593,11 +601,8 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
 - For file_tool.write: use [PREVIOUS_RESULT] for content from previous step
 - Respond with valid JSON only"""
 
-        user_prompt = f"""## Original User Query
-{user_query}
-
-## Previous Results
-{previous_results}
+        user_prompt = f"""## Execution Context
+{execution_summary}
 
 ## Current Step to Execute
 Step {planned_step.step}: {planned_step.tool_name}.{planned_step.action}

@@ -348,10 +348,10 @@ class TestSharedStorageSummary(unittest.TestCase):
     def test_01_get_summary_empty(self):
         """빈 상태 요약 테스트"""
         print("\n[TEST] 빈 상태 요약 테스트")
-        
+
         summary = self.storage.get_summary()
-        self.assertEqual(summary, "활성 세션 없음")
-        
+        self.assertEqual(summary, "No active session")
+
         print("  ✓ 빈 상태 요약 완료")
     
     def test_02_get_summary_with_results(self):
@@ -395,9 +395,9 @@ class TestSharedStorageSummary(unittest.TestCase):
     def test_03_get_summary_truncate(self):
         """긴 output truncate 테스트"""
         print("\n[TEST] 긴 output truncate 테스트")
-        
+
         self.storage.start_session("테스트")
-        
+
         # 매우 긴 output
         long_output = "A" * 1000
         self.storage.add_result(create_tool_result(
@@ -405,13 +405,13 @@ class TestSharedStorageSummary(unittest.TestCase):
             executor="tool", executor_type="tool",
             action="action", input={}, output=long_output
         ))
-        
+
         summary = self.storage.get_summary()
-        
+
         # 전체 output이 아닌 truncate된 버전 포함
         self.assertIn("...", summary)
-        self.assertIn("총", summary)  # "총 1000자" 표시
-        
+        self.assertIn("chars total", summary)  # "1000 chars total" 표시 (영어 기반)
+
         print("  ✓ 긴 output truncate 완료")
 
 

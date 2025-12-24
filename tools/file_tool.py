@@ -268,11 +268,8 @@ class FileTool(BaseTool):
             size = len(content)
             action = "overwritten" if file_existed else "created"
             
-            # 명확한 성공 메시지
-            result_msg = f"✅ File '{filename}' {action} successfully ({size} bytes)"
-            
             return ToolResult.success_result(
-                output=result_msg,
+                output=content,
                 metadata={
                     "path": resolved,
                     "filename": filename,

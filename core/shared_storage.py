@@ -347,80 +347,114 @@ class SharedStorage:
     # =========================================================================
     # Summary 생성 (LLM 전달용)
     # =========================================================================
-    def get_summary(self, include_all_outputs: bool = True, include_previous_sessions: bool = False) -> str:
+    def get_summary(
+        self,
+        include_all_outputs: bool = True,
+        include_previous_sessions: bool = False,
+        include_plan: bool = True,
+        include_session_info: bool = False,
+        max_output_length: int = None,
+        max_previous_sessions: int = 10
+    ) -> str:
         """
-        LLM에 전달할 현재 상태 요약
+        LLM에 전달할 현재 상태 요약 (영어 기반, 토큰 효율 최적화)
 
         Args:
             include_all_outputs: True면 모든 결과 포함, False면 마지막 결과만
             include_previous_sessions: True면 이전 세션의 결과도 포함
+            include_plan: 실행 계획 포함 여부
+            include_session_info: 세션 ID, 생성 시간 등 메타데이터 포함 여부
+            max_output_length: Output 미리보기 최대 길이 (None이면 기본값 사용)
+            max_previous_sessions: 이전 세션에서 가져올 최대 결과 수
         """
         if not self._context:
-            return "활성 세션 없음"
+            return "No active session"
 
-        # 현재 세션 결과 요약 생성
-        results_summary = []
-        target_results = self._results if include_all_outputs else self._results[-1:] if self._results else []
+        sections = []
 
-        for r in target_results:
-            output_preview = self._truncate_output(r.output)
-            status_icon = "✓" if r.status == "success" else "✗"
-            results_summary.append(
-                f"[Step {r.step}] {status_icon} {r.executor}.{r.action} (ID: {r.result_id})\n"
-                f"  - Input: {json.dumps(r.input, ensure_ascii=False, default=str)}\n"
-                f"  - Output: {output_preview}\n"
-                f"  - Reference: [RESULT:{r.result_id}]"
+        # 1. 세션 정보 (옵션)
+        if include_session_info:
+            sections.append(
+                f"## Session Info\n"
+                f"- ID: {self._context.session_id}\n"
+                f"- Created: {self._context.created_at}"
             )
 
-        # 이전 세션 결과 (옵션)
-        previous_results_summary = []
+        # 2. 사용자 요청 (항상 포함)
+        sections.append(f"## User Request\n{self._context.user_query}")
+
+        # 3. 실행 계획 (옵션)
+        if include_plan and self._context.current_plan:
+            plan_lines = []
+            for i, step in enumerate(self._context.current_plan):
+                if i < self._context.current_step:
+                    plan_lines.append(f"  ✓ {i+1}. {step}")
+                elif i == self._context.current_step:
+                    plan_lines.append(f"  → {i+1}. {step} (current)")
+                else:
+                    plan_lines.append(f"    {i+1}. {step}")
+
+            sections.append(f"## Execution Plan\n" + "\n".join(plan_lines))
+
+        # 4. 실행 결과
+        target_results = self._results if include_all_outputs else (self._results[-1:] if self._results else [])
+
+        if target_results:
+            results_lines = []
+            output_max = max_output_length or self.OUTPUT_PREVIEW_LENGTH
+
+            for r in target_results:
+                output_preview = self._truncate_output_with_length(r.output, output_max)
+                status_icon = "✓" if r.status == "success" else "✗"
+
+                # Input 간소화: 중요한 파라미터만
+                input_summary = self._summarize_input(r.input)
+
+                results_lines.append(
+                    f"[Step {r.step}] {status_icon} {r.executor}.{r.action}\n"
+                    f"  Parameters: {input_summary}\n"
+                    f"  Output: {output_preview}\n"
+                    f"  Ref: [RESULT:{r.result_id}]"
+                )
+
+            sections.append(f"## Execution Results\n" + "\n\n".join(results_lines))
+        else:
+            sections.append("## Execution Results\nNo results yet")
+
+        # 5. 이전 세션 결과 (옵션)
         if include_previous_sessions and self._all_results:
-            # 현재 세션이 아닌 결과들만
-            other_results = [r for r in self._all_results.values() if r.session_id != self._context.session_id]
+            other_results = [
+                r for r in self._all_results.values()
+                if r.session_id != self._context.session_id
+            ]
+
             if other_results:
-                previous_results_summary.append("\n## 이전 세션 결과 (참조 가능)")
-                # 최근 10개만
-                for r in other_results[-10:]:
-                    output_preview = self._truncate_output(r.output)
+                prev_lines = []
+                for r in other_results[-max_previous_sessions:]:
+                    output_preview = self._truncate_output_with_length(
+                        r.output,
+                        max_output_length or 100  # 이전 세션은 더 짧게
+                    )
                     status_icon = "✓" if r.status == "success" else "✗"
-                    previous_results_summary.append(
-                        f"  {status_icon} {r.executor}.{r.action} (Session: {r.session_id}, ID: {r.result_id})\n"
-                        f"    - Output: {output_preview}\n"
-                        f"    - Reference: [RESULT:{r.result_id}]"
+                    prev_lines.append(
+                        f"  {status_icon} {r.executor}.{r.action}\n"
+                        f"    Output: {output_preview}\n"
+                        f"    Ref: [RESULT:{r.result_id}]"
                     )
 
-        # 현재 계획 상태
-        plan_status = []
-        for i, step in enumerate(self._context.current_plan):
-            if i < self._context.current_step:
-                plan_status.append(f"  ✓ {i+1}. {step}")
-            elif i == self._context.current_step:
-                plan_status.append(f"  → {i+1}. {step} (현재)")
-            else:
-                plan_status.append(f"    {i+1}. {step}")
-
-        summary = f"""## 세션 정보
-- Session ID: {self._context.session_id}
-- 생성 시간: {self._context.created_at}
-
-## 사용자 요청
-{self._context.user_query}
-
-## 실행 계획
-{chr(10).join(plan_status) if plan_status else "(계획 없음)"}
-
-## 실행 결과
-{chr(10).join(results_summary) if results_summary else "(아직 실행된 결과 없음)"}
-{chr(10).join(previous_results_summary) if previous_results_summary else ""}
-"""
+                sections.append(
+                    f"## Previous Sessions (Reference Only)\n" + "\n\n".join(prev_lines)
+                )
 
         self.logger.debug("Summary 생성 완료", {
             "session_id": self._context.session_id,
             "results_count": len(target_results),
-            "previous_results_included": include_previous_sessions
+            "previous_results_included": include_previous_sessions,
+            "plan_included": include_plan,
+            "session_info_included": include_session_info
         })
 
-        return summary
+        return "\n\n".join(sections)
     
     # =========================================================================
     # 파일 저장/로드
@@ -494,18 +528,35 @@ class SharedStorage:
     # 유틸리티
     # =========================================================================
     def _truncate_output(self, output: Any) -> str:
-        """Output을 미리보기용으로 truncate"""
+        """Output을 미리보기용으로 truncate (기본 길이 사용)"""
+        return self._truncate_output_with_length(output, self.OUTPUT_PREVIEW_LENGTH)
+
+    def _truncate_output_with_length(self, output: Any, max_length: int) -> str:
+        """유연한 길이로 Output을 truncate"""
         if output is None:
             return "None"
-        
+
         if isinstance(output, (dict, list)):
             output_str = json.dumps(output, ensure_ascii=False, default=str)
         else:
             output_str = str(output)
-        
-        if len(output_str) > self.OUTPUT_PREVIEW_LENGTH:
-            return output_str[:self.OUTPUT_PREVIEW_LENGTH] + f"... (총 {len(output_str)}자)"
+
+        if len(output_str) > max_length:
+            return output_str[:max_length] + f"... ({len(output_str)} chars total)"
         return output_str
+
+    def _summarize_input(self, input_data: Dict) -> str:
+        """Input 데이터를 간략하게 요약 (중요한 것만)"""
+        if not input_data:
+            return "{}"
+
+        # 3개 이하 파라미터면 전체 표시
+        if len(input_data) <= 3:
+            return json.dumps(input_data, ensure_ascii=False, default=str)
+
+        # 많으면 키만 표시
+        keys = list(input_data.keys())
+        return f"{{{', '.join(keys[:3])}, ... ({len(input_data)} params)}}"
     
     def clear_history(self):
         """히스토리 초기화"""
