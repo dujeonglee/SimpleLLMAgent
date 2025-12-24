@@ -31,6 +31,7 @@ class LLMTool(BaseTool):
 
     def __init__(
         self,
+        base_path: str = None,
         debug_enabled: bool = True,
         use_mock: bool = False,
         llm_caller: Optional[Callable[[str, str], str]] = None,
@@ -40,15 +41,19 @@ class LLMTool(BaseTool):
         Initialize LLMTool
 
         Args:
+            base_path: Base directory path for file operations (files can only be accessed within this path for security)
             debug_enabled: Enable debug logging
             use_mock: If True, use mock responses instead of actual LLM calls
             llm_caller: LLM API calling function with signature (system_prompt, user_prompt) -> response
             get_previous_result: Function to retrieve previous step results (currently unused)
         """
+        self.base_path = base_path or os.getcwd()
         self.use_mock = use_mock
         self._llm_caller = llm_caller
         self._get_previous_result = get_previous_result
         super().__init__(debug_enabled=debug_enabled)
+
+        self.logger.info(f"Base path set to: {self.base_path}")
 
         if use_mock:
             self.logger.warn("Running in MOCK mode")
@@ -67,7 +72,7 @@ class LLMTool(BaseTool):
                     ActionParam("codereview_content", "str", False,
                                "Code content to review (provide either content or file_path)", None),
                     ActionParam("codereview_file_path", "str", False,
-                               "File path to the code file to review (provide either content or file_path)", None),
+                               f"File path to the code file to review, relative to base_path ({self.base_path}) (provide either content or file_path)", None),
                     ActionParam("codereview_instruction", "str", True,
                                "Specific review instructions or focus areas (e.g., 'Focus on error handling', 'Check for security issues', 'Review API design')"),
                 ],
@@ -81,7 +86,7 @@ class LLMTool(BaseTool):
                     ActionParam("architectureanalysis_content", "str", False,
                                "Code or architectural documentation to analyze (provide either content or file_path)", None),
                     ActionParam("architectureanalysis_file_path", "str", False,
-                               "File path to analyze architecture from (provide either content or file_path)", None),
+                               f"File path to analyze architecture from, relative to base_path ({self.base_path}) (provide either content or file_path)", None),
                     ActionParam("architectureanalysis_instruction", "str", True,
                                "Specific analysis instructions (e.g., 'Evaluate scalability', 'Identify design patterns', 'Suggest architectural improvements')"),
                 ],
@@ -95,7 +100,7 @@ class LLMTool(BaseTool):
                     ActionParam("codedoc_content", "str", False,
                                "Code to document (provide either content or file_path)", None),
                     ActionParam("codedoc_file_path", "str", False,
-                               "File path to the code file to document (provide either content or file_path)", None),
+                               f"File path to the code file to document, relative to base_path ({self.base_path}) (provide either content or file_path)", None),
                     ActionParam("codedoc_instruction", "str", True,
                                "Documentation instructions (e.g., 'Generate API docs', 'Add inline comments', 'Create usage examples', 'Write README section')"),
                 ],
@@ -109,7 +114,7 @@ class LLMTool(BaseTool):
                     ActionParam("staticanalysis_content", "str", False,
                                "Code to analyze statically (provide either content or file_path)", None),
                     ActionParam("staticanalysis_file_path", "str", False,
-                               "File path to the code file for static analysis (provide either content or file_path)", None),
+                               f"File path to the code file for static analysis, relative to base_path ({self.base_path}) (provide either content or file_path)", None),
                     ActionParam("staticanalysis_instruction", "str", True,
                                "Analysis focus instructions (e.g., 'Check for null pointer dereferences', 'Find memory leaks', 'Detect SQL injection risks')"),
                 ],
@@ -123,7 +128,7 @@ class LLMTool(BaseTool):
                     ActionParam("codewriter_content", "str", False,
                                "Existing code to modify or extend (optional for new code generation)", None),
                     ActionParam("codewriter_file_path", "str", False,
-                               "File path to existing code for modification (optional for new code generation)", None),
+                               f"File path to existing code for modification, relative to base_path ({self.base_path}) (optional for new code generation)", None),
                     ActionParam("codewriter_instruction", "str", True,
                                "Code writing instructions and specifications (e.g., 'Write a REST API handler', 'Add error handling to this function', 'Refactor using design pattern X')"),
                 ],
@@ -189,6 +194,21 @@ class LLMTool(BaseTool):
     # Helper Methods
     # =========================================================================
 
+    def _resolve_path(self, path: str) -> str:
+        """경로를 절대 경로로 변환 (base_path 기준)"""
+        if os.path.isabs(path):
+            return path
+        return os.path.join(self.base_path, path)
+
+    def _validate_path(self, path: str) -> tuple[bool, str]:
+        """경로가 base_path 하위인지 검증 (보안)"""
+        resolved = os.path.realpath(self._resolve_path(path))
+        base_real = os.path.realpath(self.base_path)
+
+        if not resolved.startswith(base_real):
+            return False, f"Access denied: path must be under {self.base_path}"
+        return True, resolved
+
     def _get_content(self, content: Optional[str], file_path: Optional[str]) -> tuple[str, str]:
         """
         Get content from either direct content or file path.
@@ -198,15 +218,28 @@ class LLMTool(BaseTool):
             return content, ""
 
         if file_path:
+            # Validate and resolve file path
+            is_valid, resolved_or_error = self._validate_path(file_path)
+            if not is_valid:
+                return "", resolved_or_error
+
+            resolved = resolved_or_error
+
             # Read from file
             try:
-                import os
-                if not os.path.exists(file_path):
+                if not os.path.exists(resolved):
                     return "", f"File not found: {file_path}"
 
-                with open(file_path, 'r', encoding='utf-8') as f:
+                if not os.path.isfile(resolved):
+                    return "", f"Not a file: {file_path}"
+
+                with open(resolved, 'r', encoding='utf-8') as f:
                     file_content = f.read()
+
+                self.logger.debug(f"Read file: {resolved} ({len(file_content)} bytes)")
                 return file_content, ""
+            except UnicodeDecodeError as e:
+                return "", f"Encoding error reading {file_path}: {str(e)}"
             except Exception as e:
                 return "", f"Failed to read file {file_path}: {str(e)}"
 

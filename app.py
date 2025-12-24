@@ -67,7 +67,7 @@ class AppState:
         os.makedirs(files_dir, exist_ok=True)
 
         self.registry.register(FileTool(base_path=files_dir, debug_enabled=True))
-        self.registry.register(LLMTool(debug_enabled=True, use_mock=False))
+        self.registry.register(LLMTool(base_path=files_dir, debug_enabled=True, use_mock=False))
     
     def update_llm_config(self, **kwargs):
         """LLM 설정 업데이트 및 저장"""

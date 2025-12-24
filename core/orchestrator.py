@@ -553,7 +553,7 @@ Example for file_tool.write:
   "write_content": "[RESULT:result_002]"
 }}
 
-## Available Results
+## Available Previous Step Results
 {available_results}
 
 ## Response Format
@@ -783,16 +783,19 @@ Based on the above results, provide a final answer to the user's query."""
     # =========================================================================
     
     def _call_llm_api(self, system_prompt: str, user_prompt: str) -> str:
-        """Ollama API 호출"""
+        """Ollama Chat API 호출"""
         try:
             import requests
-            
-            url = f"{self.llm_config.base_url}/api/generate"
-            
+
+            url = f"{self.llm_config.base_url}/api/chat"
+
+            # Chat API 형식: messages 배열 사용
             payload = {
                 "model": self.llm_config.model,
-                "prompt": user_prompt,
-                "system": system_prompt,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
                 "stream": False,
                 "options": {
                     "temperature": self.llm_config.temperature,
@@ -805,10 +808,11 @@ Based on the above results, provide a final answer to the user's query."""
 
             response = requests.post(url, json=payload, timeout=self.llm_config.timeout)
             response.raise_for_status()
-            
+
             data = response.json()
-            return data.get("response", "")
-            
+            # Chat API 응답 형식: message.content
+            return data.get("message", {}).get("content", "")
+
         except ImportError:
             self.logger.warn("requests 패키지 없음 - Mock 응답 반환")
             return self._mock_llm_response()

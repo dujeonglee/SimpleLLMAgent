@@ -121,69 +121,11 @@ class FileTool(BaseTool):
     # Private Action Implementations
     # =========================================================================
     
-    def _normalize_path(self, path: str) -> str:
-        """경로 정규화 - 절대경로, 네트워크 경로 등에서 파일명/상대경로 추출
-        
-        Examples:
-            \\\\server\\share\\path\\file.txt -> file.txt
-            C:\\Users\\...\\workspace\\files\\file.txt -> file.txt
-            /home/user/workspace/files/file.txt -> file.txt
-            ./subdir/file.txt -> subdir/file.txt
-            file.txt -> file.txt
-        """
-        if not path:
-            return path
-        
-        # 경로 구분자 통일
-        normalized = path.replace('\\', '/')
-        
-        # base_path 패턴 찾기 (workspace/files 또는 유사 패턴)
-        base_markers = ['workspace/files/', 'workspace\\files\\', '/files/', '\\files\\']
-         
-        for marker in base_markers:
-            marker_normalized = marker.replace('\\', '/')
-            if marker_normalized in normalized:
-                # 마커 이후 부분만 추출
-                idx = normalized.rfind(marker_normalized)
-                extracted = normalized[idx + len(marker_normalized):]
-                if extracted:
-                    self.logger.debug(f"경로 정규화: {path} -> {extracted}")
-                    return extracted
-        
-        # UNC 경로 (\\server\share\...) 처리
-        if normalized.startswith('//'):
-            # 파일명만 추출
-            filename = os.path.basename(normalized)
-            self.logger.debug(f"UNC 경로에서 파일명 추출: {path} -> {filename}")
-            return filename
-        
-        # Windows 절대 경로 (C:\...) 처리
-        if len(normalized) > 2 and normalized[1] == ':':
-            # 파일명만 추출
-            filename = os.path.basename(normalized)
-            self.logger.debug(f"절대 경로에서 파일명 추출: {path} -> {filename}")
-            return filename
-        
-        # Unix 절대 경로 (/...) 처리
-        if normalized.startswith('/') and not normalized.startswith('./'):
-            filename = os.path.basename(normalized)
-            self.logger.debug(f"절대 경로에서 파일명 추출: {path} -> {filename}")
-            return filename
-        
-        # ./ 제거
-        if normalized.startswith('./'):
-            normalized = normalized[2:]
-        
-        return normalized
-    
     def _resolve_path(self, path: str) -> str:
         """경로를 절대 경로로 변환 (base_path 기준)"""
-        # 먼저 경로 정규화
-        normalized = self._normalize_path(path)
-        
-        if os.path.isabs(normalized):
-            return normalized
-        return os.path.join(self.base_path, normalized)
+        if os.path.isabs(path):
+            return path
+        return os.path.join(self.base_path, path)
     
     def _validate_path(self, path: str) -> tuple[bool, str]:
         """경로가 base_path 하위인지 검증 (보안)"""
