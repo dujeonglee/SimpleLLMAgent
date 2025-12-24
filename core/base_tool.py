@@ -25,15 +25,31 @@ from .shared_storage import DebugLogger
 
 @dataclass
 class ToolResult:
-    """Tool 실행 결과"""
+    """Tool 실행 결과 (ExecutionResult와 통합)"""
+    step: int = 0                    # 실행 step 번호
+    executor: str = ""               # tool 또는 agent 이름
+    executor_type: str = "tool"      # "tool" 또는 "agent"
+    action: str = ""                 # 수행한 action
+    input: Dict[str, Any] = field(default_factory=dict)  # 입력 파라미터
     success: bool                    # 성공 여부
     output: Any                      # 다음 step에서 사용할 데이터
     error: Optional[str] = None      # 에러 메시지 (실패 시)
     metadata: Dict = field(default_factory=dict)  # 부가 정보
-    
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
     def to_dict(self) -> Dict:
         return asdict(self)
-    
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> "ToolResult":
+        """dict로부터 ToolResult 객체 생성"""
+        return cls(**data)
+
+    @property
+    def status(self) -> str:
+        """success 필드를 기반으로 status 반환"""
+        return "success" if self.success else "error"
+
     @classmethod
     def success_result(cls, output: Any, metadata: Dict = None) -> "ToolResult":
         """성공 결과 생성 헬퍼"""
@@ -43,7 +59,7 @@ class ToolResult:
             error=None,
             metadata=metadata or {}
         )
-    
+
     @classmethod
     def error_result(cls, error: str, metadata: Dict = None) -> "ToolResult":
         """에러 결과 생성 헬퍼"""
@@ -56,10 +72,11 @@ class ToolResult:
 
     def __str__(self) -> str:
         """ToolResult 객체를 문자열로 표현하는 메서드"""
+        status_label = self.status.upper()
         if self.success:
-            return f"✅ Success: Output: {str(self.output)}, Metadata: {str(self.metadata)}"
+            return f"{status_label}: Output: {str(self.output)}, Metadata: {str(self.metadata)}"
         else:
-            return f"❌ Error: {str(self.error)}, Output: {str(self.output)}, Metadata: {str(self.metadata)}"
+            return f"{status_label}: {str(self.error)}, Output: {str(self.output)}, Metadata: {str(self.metadata)}"
 
 
 
@@ -238,7 +255,7 @@ class BaseTool(ABC):
 
         # 5. 결과 로깅
         if result.success:
-            output_preview = self._truncate_output(str(result))
+            output_preview = self._truncate_output(str(result.output))
             self.logger.info(f"실행 완료: {action}", {
                 "success": True,
                 "output_preview": output_preview,
