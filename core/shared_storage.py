@@ -66,25 +66,8 @@ class DebugLogger:
 # =============================================================================
 # Data Classes
 # =============================================================================
-@dataclass
-class ExecutionResult:
-    """단일 실행 결과"""
-    step: int
-    executor: str           # tool 또는 agent 이름
-    executor_type: str      # "tool" 또는 "agent"
-    action: str             # 수행한 action
-    input: Dict[str, Any]   # 입력 파라미터
-    output: Any             # 실행 결과 (다음 step에서 사용)
-    status: str             # "success" 또는 "error"
-    error_message: Optional[str] = None
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    
-    def to_dict(self) -> Dict:
-        return asdict(self)
-    
-    @classmethod
-    def from_dict(cls, data: Dict) -> "ExecutionResult":
-        return cls(**data)
+# ExecutionResult는 제거되고 ToolResult로 통합됨
+# from core.base_tool import ToolResult 사용
 
 
 @dataclass
@@ -141,13 +124,15 @@ class SharedStorage:
     OUTPUT_PREVIEW_LENGTH = 500
     
     def __init__(self, debug_enabled: bool = True):
+        from core.base_tool import ToolResult  # 순환 import 방지를 위해 여기서 import
+
         self.logger = DebugLogger("SharedStorage", enabled=debug_enabled)
-        
+
         # 핵심 데이터 구조
         self._context: Optional[Context] = None
-        self._results: List[ExecutionResult] = []
+        self._results: List[ToolResult] = []
         self._history: List[SessionHistory] = []
-        
+
         self.logger.info("SharedStorage 초기화 완료")
     
     # =========================================================================
@@ -202,42 +187,37 @@ class SharedStorage:
     # =========================================================================
     # Results 관리
     # =========================================================================
-    def add_result(
-        self,
-        executor: str,
-        executor_type: str,
-        action: str,
-        input_data: Dict[str, Any],
-        output: Any,
-        status: str = "success",
-        error_message: str = None
-    ) -> ExecutionResult:
-        """실행 결과 추가"""
+    def add_result(self, tool_result):
+        """
+        실행 결과 추가 (ToolResult를 직접 받음)
+
+        Args:
+            tool_result: ToolResult 객체
+
+        Returns:
+            ToolResult: 저장된 실행 결과
+        """
+        from core.base_tool import ToolResult
+
         if not self._context:
             raise RuntimeError("No active session")
-        
-        result = ExecutionResult(
-            step=len(self._results) + 1,
-            executor=executor,
-            executor_type=executor_type,
-            action=action,
-            input=input_data,
-            output=output,
-            status=status,
-            error_message=error_message
-        )
-        
-        self._results.append(result)
-        
+
+        # step 번호 자동 할당 (설정되지 않은 경우)
+        if tool_result.step == 0:
+            self.logger.error("Step 정보가 기록되지 않음")
+            raise RuntimeError("Step info is missing from ToolResult")
+
+        self._results.append(tool_result)
+
         # 로그 출력 (output은 truncate)
-        output_preview = self._truncate_output(str(output))
-        self.logger.info(f"결과 추가: Step {result.step} - {executor}.{action}", {
-            "status": status,
+        output_preview = self._truncate_output(str(tool_result.output))
+        self.logger.info(f"결과 추가: Step {tool_result.step} - {tool_result.executor}.{tool_result.action}", {
+            "status": tool_result.status,
             "output_preview": output_preview,
-            "error": error_message
+            "error": tool_result.error
         })
-        
-        return result
+
+        return tool_result
     
     def get_results(self) -> List[Dict]:
         """모든 실행 결과 반환"""
@@ -398,15 +378,17 @@ class SharedStorage:
             with open(filepath, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
+            from core.base_tool import ToolResult
+
             # Context 복원
             if data.get("context"):
                 self._context = Context.from_dict(data["context"])
             else:
                 self._context = None
-            
+
             # Results 복원
-            self._results = [ExecutionResult.from_dict(r) for r in data.get("results", [])]
-            
+            self._results = [ToolResult.from_dict(r) for r in data.get("results", [])]
+
             # History 복원
             self._history = [SessionHistory.from_dict(h) for h in data.get("history", [])]
             
