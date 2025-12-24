@@ -490,7 +490,7 @@ If tools are needed:
 If no tools needed:
 {{
     "thought": "This is a simple question I can answer directly",
-    "direct_answer": "Your answer here"
+    "direct_answer": "Your answer here (IMPORTANT: Respond in Korean/한글)"
 }}
 
 ## Rules
@@ -828,7 +828,7 @@ Provide exact parameters for this step. Respond with JSON only."""
         results = self.storage.get_results()
         previous_results = self._format_previous_results(results)
         plan_status = self._format_plan_with_status()
-        
+
         system_prompt = """You are generating the final response based on executed tasks.
 
 ## Your Task
@@ -841,7 +841,8 @@ Provide exact parameters for this step. Respond with JSON only."""
 - Reference specific results when relevant
 - If any step failed, mention it and provide alternatives if possible
 - Respond naturally, not in JSON format
-- If the task was to save a file, confirm it was saved successfully"""
+- If the task was to save a file, confirm it was saved successfully
+- IMPORTANT: Respond in Korean (한글로 답변하세요)"""
 
         user_prompt = f"""## Original User Query
 {user_query}
