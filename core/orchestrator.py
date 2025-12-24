@@ -339,9 +339,9 @@ class Orchestrator:
                             tool_name=tool_call.name,
                             action=tool_call.action
                         )
-                        
-                        # Tool 실행
-                        result = self._execute_tool(tool_call)
+
+                        # Tool 실행 (자동 재시도 포함)
+                        result = self._execute_tool_with_retry(tool_call, planned_step, max_retries=2)
 
                         # Tool 실행 후 중지 체크
                         if self._stopped:
@@ -406,12 +406,230 @@ class Orchestrator:
     # =========================================================================
     # Tool Execution (Updated)
     # =========================================================================
-    
+
+    def _execute_tool_with_retry(
+        self,
+        tool_call: ToolCall,
+        planned_step: PlannedStep,
+        max_retries: int = 2
+    ) -> ToolResult:
+        """
+        Tool 실행 및 실패 시 자동 재시도
+
+        Args:
+            tool_call: 실행할 tool call
+            planned_step: 계획된 step 정보
+            max_retries: 최대 재시도 횟수 (기본 2회)
+
+        Returns:
+            ToolResult: 최종 실행 결과 (성공 또는 최종 실패)
+                       metadata에 재시도 정보 포함:
+                       - retry_count: 재시도 횟수
+                       - retry_history: 각 시도의 에러 기록
+                       - corrected_params: 수정된 파라미터 (재시도 성공 시)
+        """
+        retry_history = []
+
+        # 첫 시도
+        result = self._execute_tool(tool_call)
+
+        if result.success:
+            # 첫 시도 성공 - 재시도 정보 없음
+            result.metadata["retry_count"] = 0
+            return result
+
+        # 첫 시도 실패 - 재시도 시작
+        retry_history.append({
+            "attempt": 0,
+            "error": result.error,
+            "params": tool_call.params.copy()
+        })
+
+        # 재시도 루프
+        for retry_count in range(1, max_retries + 1):
+            self.logger.info(f"재시도 {retry_count}/{max_retries}: {tool_call.name}.{tool_call.action}", {
+                "previous_error": result.error
+            })
+
+            # LLM에 에러 전달하여 수정된 파라미터 요청
+            corrected_call = self._request_parameter_correction(
+                original_call=tool_call,
+                error_message=result.error,
+                planned_step=planned_step,
+                retry_count=retry_count
+            )
+
+            if not corrected_call:
+                # LLM이 수정 불가능하다고 판단
+                self.logger.warn(f"재시도 중단: LLM이 파라미터 수정 불가 판단")
+                break
+
+            # 수정된 파라미터로 재시도
+            result = self._execute_tool(corrected_call)
+
+            retry_history.append({
+                "attempt": retry_count,
+                "error": result.error if not result.success else None,
+                "params": corrected_call.params.copy(),
+                "success": result.success
+            })
+
+            if result.success:
+                # 재시도 성공!
+                self.logger.info(f"재시도 성공: {retry_count}번째 시도에서 성공")
+                result.metadata["retry_count"] = retry_count
+                result.metadata["retry_history"] = retry_history
+                result.metadata["corrected_params"] = corrected_call.params
+                return result
+
+        # 모든 재시도 실패
+        result.metadata["retry_count"] = len(retry_history) - 1
+        result.metadata["retry_history"] = retry_history
+        result.metadata["retry_exhausted"] = True
+
+        self.logger.error(f"재시도 모두 실패: {max_retries}회 시도 후 실패")
+
+        return result
+
+    def _request_parameter_correction(
+        self,
+        original_call: ToolCall,
+        error_message: str,
+        planned_step: PlannedStep,
+        retry_count: int
+    ) -> Optional[ToolCall]:
+        """
+        LLM에 에러 정보를 전달하여 수정된 파라미터 요청
+
+        Args:
+            original_call: 원본 tool call
+            error_message: 발생한 에러 메시지
+            planned_step: 계획된 step
+            retry_count: 현재 재시도 횟수
+
+        Returns:
+            Optional[ToolCall]: 수정된 tool call (수정 불가능하면 None)
+        """
+        # 현재 tool 가져오기
+        current_tool = self.tools.get(original_call.name)
+        if not current_tool:
+            return None
+
+        # 현재 action의 schema만 가져오기
+        action_schema = current_tool.get_action_schema(original_call.action)
+        if not action_schema:
+            return None
+
+        # action schema를 JSON 형식으로 변환
+        action_schema_dict = action_schema.to_dict()
+        action_schema_json = json.dumps(
+            {
+                "action": original_call.action,
+                **action_schema_dict
+            },
+            indent=2,
+            ensure_ascii=False
+        )
+
+        # 사용 가능한 결과 목록
+        available_results = self._format_available_results()
+
+        system_prompt = f"""You are analyzing a tool execution error and providing corrected parameters.
+
+## Current Step Context
+Step {planned_step.step}: {planned_step.description}
+
+## Current Action Schema
+Tool: {original_call.name}
+Action: {original_call.action}
+
+{action_schema_json}
+
+## Previous Execution Attempt
+Parameters Used:
+{json.dumps(original_call.params, indent=2, ensure_ascii=False)}
+
+Error Occurred:
+{error_message}
+
+## Available Previous Results (for reference)
+{available_results}
+
+## Your Task
+1. Analyze why the execution failed based on the error message
+2. Determine if the error can be fixed by modifying parameters
+3. If fixable: provide corrected parameters
+4. If NOT fixable (e.g., file doesn't exist, permission denied): return empty tool_calls
+
+## Response Format (JSON only)
+
+If error is fixable with parameter changes:
+{{
+    "thought": "Analysis: why it failed and how to fix it",
+    "tool_calls": [{{
+        "name": "{original_call.name}",
+        "arguments": {{
+            "action": "{original_call.action}",
+            ... corrected parameters ...
+        }}
+    }}]
+}}
+
+If error CANNOT be fixed by changing parameters:
+{{
+    "thought": "Analysis: why this error cannot be fixed with parameter changes",
+    "tool_calls": []
+}}
+
+## Rules
+- You MUST respond with valid JSON only
+- Analyze the error carefully before deciding
+- Common fixable errors: wrong path format, missing required params, invalid parameter values
+- Common unfixable errors: file not found, permission denied, network unreachable
+- Use [RESULT:result_id] to reference previous results if helpful"""
+
+        user_prompt = f"""## Retry Attempt {retry_count}
+
+The tool execution failed. Analyze the error and provide corrected parameters if possible.
+
+Respond with JSON only."""
+
+        try:
+            raw_response = self._call_llm_api(system_prompt, user_prompt)
+            parsed = self._parse_llm_response(raw_response)
+
+            if not parsed.tool_calls:
+                self.logger.info(f"LLM 판단: 파라미터 수정으로 해결 불가능", {
+                    "step": planned_step.step,
+                    "description": planned_step.description,
+                    "thought": parsed.thought
+                })
+                return None
+
+            self.logger.info(f"LLM이 파라미터 수정 제안", {
+                "step": planned_step.step,
+                "description": planned_step.description,
+                "thought": parsed.thought,
+                "corrected_params": parsed.tool_calls[0].params
+            })
+
+            return parsed.tool_calls[0]
+
+        except Exception as e:
+            self.logger.error(f"파라미터 수정 요청 실패: {str(e)}", {
+                "step": planned_step.step,
+                "description": planned_step.description
+            })
+            return None
+
     def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Tool 실행 - REF 자동 치환
 
         지원하는 참조 형식:
         - [RESULT:result_id]: 특정 result_id의 output으로 치환
+
+        Note: 이 메서드는 재시도 로직이 없는 단순 실행만 수행.
+              재시도가 필요한 경우 _execute_tool_with_retry() 사용.
         """
         # 파라미터 복사 및 REF 치환
         params = tool_call.params.copy()
