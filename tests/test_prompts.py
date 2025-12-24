@@ -89,9 +89,9 @@ def test_planning_prompt():
 4. If no tools needed, provide direct answer
 
 ## IMPORTANT: Data Flow Between Steps
-- Each step's output becomes available for the next step
-- Reference previous results using [RESULT:result_id] format
-- Example: [RESULT:result_001] will be replaced with Step 1's output
+- Each step's output becomes available for the next step with a unique result ID
+- Reference previous results using [RESULT:result_id] format in parameters
+- Example: Step 1 output → [RESULT:result_001], Step 2 output → [RESULT:result_002]
 
 ## Response Format (JSON only)
 
@@ -109,7 +109,7 @@ If tools are needed:
             "step": 2,
             "tool_name": "llm_tool",
             "action": "analyze",
-            "description": "Analyze the file content (uses previous output automatically)"
+            "description": "Analyze the file content"
         }},
         {{
             "step": 3,

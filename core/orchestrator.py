@@ -440,9 +440,9 @@ class Orchestrator:
 4. If no tools needed, provide direct answer
 
 ## IMPORTANT: Data Flow Between Steps
-- Each step's output becomes available for the next step
-- For llm_tool: It can automatically access the previous step's output
-- For file_tool.write: Use [PREVIOUS_RESULT] placeholder for content from previous step
+- Each step's output becomes available for the next step with a unique result ID
+- Reference previous results using [RESULT:result_id] format in parameters
+- Example: Step 1 output → [RESULT:result_001], Step 2 output → [RESULT:result_002]
 
 ## Response Format (JSON only)
 
@@ -460,13 +460,13 @@ If tools are needed:
             "step": 2,
             "tool_name": "llm_tool",
             "action": "analyze",
-            "description": "Analyze the file content (uses previous output automatically)"
+            "description": "Analyze the file content"
         }},
         {{
             "step": 3,
             "tool_name": "file_tool",
             "action": "write",
-            "description": "Save analysis result to file (uses [PREVIOUS_RESULT])"
+            "description": "Save analysis result to file"
         }}
     ]
 }}
