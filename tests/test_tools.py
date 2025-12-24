@@ -398,16 +398,16 @@ class TestLLMTool(unittest.TestCase):
     def test_05_extract(self):
         """정보 추출하기 (Mock)"""
         print("\n[TEST] LLMTool 정보 추출하기 (Mock)")
-        
+
         result = self.tool.execute("extract", {
             "extract_content": "[ERROR] Connection failed\n[ERROR] Timeout\n[WARN] Retry",
-            "extract_type": "errors"
+            "extract_what": "errors"
         })
-        
+
         self.assertTrue(result.success)
-        self.assertIsInstance(result.output, dict)
-        self.assertIn("items", result.output)
-        
+        self.assertIsInstance(result.output, str)
+        self.assertTrue(len(result.output) > 0)
+
         print(f"  ✓ 추출 완료")
         print(f"    Extracted: {result.output}")
 
@@ -546,15 +546,9 @@ class TestToolIntegration(unittest.TestCase):
         # 3. Step 1: 파일 읽기
         result = self.file_tool.execute("read", {"read_path": "error.log"})
         self.assertTrue(result.success)
+        result.step=1
         
-        self.storage.add_result(
-            executor=self.file_tool.name,
-            executor_type="tool",
-            action="read",
-            input_data={"read_path": "error.log"},
-            output=result.output,
-            status="success" if result.success else "error"
-        )
+        self.storage.add_result(result)
         self.storage.advance_step()
         print("2. Step 1 완료: file_tool.read")
         
@@ -565,15 +559,9 @@ class TestToolIntegration(unittest.TestCase):
             "analyze_instruction": "이 에러 로그에서 주요 문제를 식별하고 원인을 분석해주세요."
         })
         self.assertTrue(result.success)
+        result.step=2
         
-        self.storage.add_result(
-            executor=self.llm_tool.name,
-            executor_type="tool",
-            action="analyze",
-            input_data={"analyze_content": previous_output[:100] + "..."},
-            output=result.output,
-            status="success" if result.success else "error"
-        )
+        self.storage.add_result(result)
         self.storage.advance_step()
         print("3. Step 2 완료: llm_tool.analyze")
         
@@ -583,15 +571,9 @@ class TestToolIntegration(unittest.TestCase):
             "search_max_results": 3
         })
         self.assertTrue(result.success)
+        result.step=3
         
-        self.storage.add_result(
-            executor=self.web_tool.name,
-            executor_type="tool",
-            action="search",
-            input_data={"search_keyword": "DMA timeout wifi driver fix"},
-            output=result.output,
-            status="success" if result.success else "error"
-        )
+        self.storage.add_result(result)
         print("4. Step 3 완료: web_tool.search")
         
         # 6. Summary 확인
