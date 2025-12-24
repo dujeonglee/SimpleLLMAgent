@@ -15,10 +15,10 @@ from core.base_tool import BaseTool, ActionSchema, ActionParam, ToolResult
 
 
 class FileTool(BaseTool):
-    """파일 작업 Tool"""
-    
+    """File operations tool for reading, writing, modifying, and deleting files"""
+
     name = "file_tool"
-    description = "파일 읽기, 쓰기, 수정, 삭제"
+    description = "Read, write, modify, and delete files within the workspace"
     
     def __init__(self, base_path: str = None, debug_enabled: bool = True):
         """
@@ -34,64 +34,54 @@ class FileTool(BaseTool):
         return {
             "read": ActionSchema(
                 name="read",
-                description="파일 내용 읽기",
+                description="Read the contents of a file from the workspace",
                 params=[
-                    ActionParam("read_path", "str", True, "읽을 파일 경로"),
-                    ActionParam("read_encoding", "str", False, "파일 인코딩", "utf-8")
+                    ActionParam("read_path", "str", True, f"Path to the file to read (relative to {self.base_path})"),
+                    ActionParam("read_encoding", "str", False, "Character encoding of the file (e.g., utf-8, ascii, latin-1)", "utf-8")
                 ],
                 output_type="str",
-                output_description="파일 내용"
+                output_description="The complete text content of the file"
             ),
             "write": ActionSchema(
                 name="write",
-                description="파일에 내용 쓰기 (새 파일 생성 또는 덮어쓰기)",
+                description="Write content to a file (creates new file or overwrites existing file if overwrite=true)",
                 params=[
-                    ActionParam("write_path", "str", True, "저장할 파일 경로"),
-                    ActionParam("write_content", "str", True, "작성할 내용"),
-                    ActionParam("write_overwrite", "bool", False, "기존 파일 덮어쓰기 여부", False),
-                    ActionParam("write_encoding", "str", False, "파일 인코딩", "utf-8")
+                    ActionParam("write_path", "str", True, f"Path where the file will be saved (relative to {self.base_path})"),
+                    ActionParam("write_content", "str", True, "The text content to write to the file"),
+                    ActionParam("write_overwrite", "bool", False, "Whether to overwrite the file if it already exists (default: false for safety)", False),
+                    ActionParam("write_encoding", "str", False, "Character encoding to use when writing the file (e.g., utf-8, ascii)", "utf-8")
                 ],
                 output_type="str",
-                output_description="작성된 파일의 절대 경로"
+                output_description="The written content echoed back for confirmation"
             ),
             "append": ActionSchema(
                 name="append",
-                description="파일 끝에 내용 추가",
+                description="Append content to the end of an existing file without overwriting existing content",
                 params=[
-                    ActionParam("append_path", "str", True, "추가할 파일 경로"),
-                    ActionParam("append_content", "str", True, "추가할 내용"),
-                    ActionParam("append_encoding", "str", False, "파일 인코딩", "utf-8")
+                    ActionParam("append_path", "str", True, f"Path to the file to append to (must exist)"),
+                    ActionParam("append_content", "str", True, "The text content to append at the end of the file"),
+                    ActionParam("append_encoding", "str", False, "Character encoding to use when appending (e.g., utf-8, ascii)", "utf-8")
                 ],
                 output_type="str",
-                output_description="수정된 파일의 절대 경로"
+                output_description="Success message with details about bytes appended and total file size"
             ),
             "delete": ActionSchema(
                 name="delete",
-                description="파일 삭제",
+                description="Permanently delete a file from the workspace",
                 params=[
-                    ActionParam("delete_path", "str", True, "삭제할 파일 경로")
+                    ActionParam("delete_path", "str", True, f"Path to the file to delete (relative to {self.base_path})")
                 ],
                 output_type="bool",
-                output_description="삭제 성공 여부"
+                output_description="Success message confirming file deletion"
             ),
             "exists": ActionSchema(
                 name="exists",
-                description="파일 존재 여부 확인",
+                description="Check whether a file or directory exists at the specified path",
                 params=[
-                    ActionParam("exists_path", "str", True, "확인할 파일 경로")
+                    ActionParam("exists_path", "str", True, f"Path to check for existence (relative to {self.base_path})")
                 ],
                 output_type="bool",
-                output_description="파일 존재 여부"
-            ),
-            "list_dir": ActionSchema(
-                name="list_dir",
-                description="디렉토리 내 파일 목록 조회",
-                params=[
-                    ActionParam("list_dir_path", "str", True, "디렉토리 경로"),
-                    ActionParam("list_dir_pattern", "str", False, "파일 패턴 (예: *.txt)", "*")
-                ],
-                output_type="list",
-                output_description="파일 이름 목록"
+                output_description="Message indicating whether the path exists and whether it's a file or directory"
             )
         }
     
@@ -124,11 +114,6 @@ class FileTool(BaseTool):
             return self._delete(get_param("path"))
         elif action == "exists":
             return self._exists(get_param("path"))
-        elif action == "list_dir":
-            return self._list_dir(
-                get_param("path"),
-                get_param("pattern", "*")
-            )
         else:
             return ToolResult.error_result(f"Unknown action: {action}")
     
@@ -154,7 +139,7 @@ class FileTool(BaseTool):
         
         # base_path 패턴 찾기 (workspace/files 또는 유사 패턴)
         base_markers = ['workspace/files/', 'workspace\\files\\', '/files/', '\\files\\']
-        
+         
         for marker in base_markers:
             marker_normalized = marker.replace('\\', '/')
             if marker_normalized in normalized:

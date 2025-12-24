@@ -1,7 +1,7 @@
 """
 Tools Module Test Cases
 =======================
-BaseTool, FileTool, WebTool, LLMTool 테스트
+BaseTool, FileTool, LLMTool 테스트
 """
 
 import os
@@ -16,7 +16,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.base_tool import BaseTool, ActionSchema, ActionParam, ToolResult, ToolRegistry
 from tools.file_tool import FileTool
-from tools.web_tool import WebTool
 from tools.llm_tool import LLMTool
 
 
@@ -255,78 +254,6 @@ class TestFileTool(unittest.TestCase):
         print(f"  ✓ 에러 처리: {result.error}")
 
 
-class TestWebTool(unittest.TestCase):
-    """WebTool 테스트 (Mock 모드)"""
-    
-    def setUp(self):
-        self.tool = WebTool(debug_enabled=True, use_mock=True)
-    
-    def test_01_get_schema(self):
-        """스키마 조회"""
-        print("\n[TEST] WebTool 스키마 조회")
-        
-        schema = self.tool.get_schema()
-        
-        self.assertEqual(schema["name"], "web_tool")
-        self.assertIn("search", schema["actions"])
-        self.assertIn("fetch", schema["actions"])
-        
-        print("  ✓ 스키마 조회 완료")
-        print(f"    Actions: {list(schema['actions'].keys())}")
-    
-    def test_02_search(self):
-        """웹 검색 (Mock)"""
-        print("\n[TEST] WebTool 검색 (Mock)")
-        
-        result = self.tool.execute("search", {
-            "search_keyword": "python tutorial",
-            "search_max_results": 3
-        })
-        
-        self.assertTrue(result.success)
-        self.assertIsInstance(result.output, str)
-        self.assertIn("✅ Found 3 results", result.output)
-        self.assertIn("python tutorial", result.output)
-        
-        # 상세 데이터는 metadata에 저장됨
-        self.assertIn("results", result.metadata)
-        self.assertEqual(len(result.metadata["results"]), 3)
-        
-        # 결과 구조 확인
-        for item in result.metadata["results"]:
-            self.assertIn("title", item)
-            self.assertIn("url", item)
-            self.assertIn("snippet", item)
-        
-        print(f"  ✓ 검색 결과: {result.metadata['result_count']}개")
-        print(f"    첫 번째 결과: {result.metadata['results'][0]['title']}")
-    
-    def test_03_fetch(self):
-        """페이지 가져오기 (Mock)"""
-        print("\n[TEST] WebTool 페이지 가져오기 (Mock)")
-        
-        result = self.tool.execute("fetch", {
-            "fetch_url": "https://example.com/test"
-        })
-        
-        self.assertTrue(result.success)
-        self.assertIsInstance(result.output, str)
-        self.assertIn("example.com", result.output)
-        
-        print(f"  ✓ 페이지 가져오기 완료")
-        print(f"    Content length: {len(result.output)}")
-    
-    def test_04_invalid_url(self):
-        """잘못된 URL"""
-        print("\n[TEST] WebTool 잘못된 URL")
-        
-        result = self.tool.execute("fetch", {"fetch_url": "not-a-valid-url"})
-        
-        self.assertFalse(result.success)
-        self.assertIn("Invalid URL", result.error)
-        print(f"  ✓ 에러 처리: {result.error}")
-
-
 class TestLLMTool(unittest.TestCase):
     """LLMTool 테스트 (Mock 모드)"""
     
@@ -425,43 +352,41 @@ class TestToolRegistry(unittest.TestCase):
     def test_01_register_and_get(self):
         """Tool 등록 및 조회"""
         print("\n[TEST] ToolRegistry 등록 및 조회")
-        
+
         file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
-        web_tool = WebTool(debug_enabled=True, use_mock=True)
-        
+        llm_tool = LLMTool(debug_enabled=True, use_mock=True)
+
         self.registry.register(file_tool)
-        self.registry.register(web_tool)
-        
+        self.registry.register(llm_tool)
+
         # 조회
         retrieved = self.registry.get("file_tool")
         self.assertIsNotNone(retrieved)
         self.assertEqual(retrieved.name, "file_tool")
-        
+
         # 목록
         tools = self.registry.list_tools()
         self.assertEqual(len(tools), 2)
         self.assertIn("file_tool", tools)
-        self.assertIn("web_tool", tools)
-        
+        self.assertIn("llm_tool", tools)
+
         print(f"  ✓ 등록된 Tools: {tools}")
     
     def test_02_get_all_schemas(self):
         """모든 스키마 조회"""
         print("\n[TEST] ToolRegistry 모든 스키마 조회")
-        
+
         self.registry.register(FileTool(base_path=self.test_dir))
-        self.registry.register(WebTool(use_mock=True))
         self.registry.register(LLMTool(use_mock=True))
-        
+
         schemas = self.registry.get_all_schemas()
-        
-        self.assertEqual(len(schemas), 3)
-        
+
+        self.assertEqual(len(schemas), 2)
+
         tool_names = [s["name"] for s in schemas]
         self.assertIn("file_tool", tool_names)
-        self.assertIn("web_tool", tool_names)
         self.assertIn("llm_tool", tool_names)
-        
+
         print(f"  ✓ 스키마 조회 완료: {tool_names}")
     
     def test_03_execute_via_registry(self):
@@ -505,32 +430,30 @@ class TestToolIntegration(unittest.TestCase):
     
     def setUp(self):
         from core.shared_storage import SharedStorage
-        
+
         self.test_dir = tempfile.mkdtemp()
         self.storage = SharedStorage(debug_enabled=True)
         self.file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
-        self.web_tool = WebTool(debug_enabled=True, use_mock=True)
         self.llm_tool = LLMTool(debug_enabled=True, use_mock=True)
     
     def tearDown(self):
         shutil.rmtree(self.test_dir)
     
     def test_full_workflow(self):
-        """전체 워크플로우: 파일 읽기 -> 분석 -> 웹 검색"""
+        """전체 워크플로우: 파일 읽기 -> 분석"""
         print("\n[TEST] 전체 워크플로우 테스트")
         print("=" * 50)
-        
+
         # 1. 세션 시작
         self.storage.start_session(
-            user_query="error.log 파일을 분석하고 해결책을 찾아줘",
+            user_query="error.log 파일을 분석해줘",
             plan=[
                 "file_tool로 error.log 읽기",
-                "llm_tool로 에러 분석",
-                "web_tool로 해결책 검색"
+                "llm_tool로 에러 분석"
             ]
         )
         print("1. 세션 시작 완료")
-        
+
         # 2. 테스트 파일 생성
         error_log = """[2025-01-15 10:30:01] ERROR: DMA timeout in rx_handler
 [2025-01-15 10:30:02] WARN: Retry count exceeded (max: 3)
@@ -542,66 +465,53 @@ class TestToolIntegration(unittest.TestCase):
             "write_path": "error.log",
             "write_content": error_log
         })
-        
+
         # 3. Step 1: 파일 읽기
         result = self.file_tool.execute("read", {"read_path": "error.log"})
         self.assertTrue(result.success)
         result.step=1
-        
+
         self.storage.add_result(result)
         self.storage.advance_step()
         print("2. Step 1 완료: file_tool.read")
-        
+
         # 4. Step 2: LLM 분석
         previous_output = self.storage.get_last_output()
-        result = self.llm_tool.execute("analyze", {
-            "analyze_content": previous_output,
-            "analyze_instruction": "이 에러 로그에서 주요 문제를 식별하고 원인을 분석해주세요."
+        result = self.llm_tool.execute("general", {
+            "general_prompt": f"이 에러 로그에서 주요 문제를 식별하고 원인을 분석해주세요:\n{previous_output}"
         })
         self.assertTrue(result.success)
         result.step=2
-        
+
         self.storage.add_result(result)
         self.storage.advance_step()
-        print("3. Step 2 완료: llm_tool.analyze")
-        
-        # 5. Step 3: 웹 검색
-        result = self.web_tool.execute("search", {
-            "search_keyword": "DMA timeout wifi driver fix",
-            "search_max_results": 3
-        })
-        self.assertTrue(result.success)
-        result.step=3
-        
-        self.storage.add_result(result)
-        print("4. Step 3 완료: web_tool.search")
-        
-        # 6. Summary 확인
+        print("3. Step 2 완료: llm_tool.general")
+
+        # 5. Summary 확인
         summary = self.storage.get_summary()
-        print("\n5. 현재 Summary:")
+        print("\n4. 현재 Summary:")
         print("-" * 40)
         print(summary)
         print("-" * 40)
-        
-        # 7. 검증
+
+        # 6. 검증
         results = self.storage.get_results()
-        self.assertEqual(len(results), 3)
+        self.assertEqual(len(results), 2)
         self.assertEqual(results[0]["executor"], "file_tool")
         self.assertEqual(results[1]["executor"], "llm_tool")
-        self.assertEqual(results[2]["executor"], "web_tool")
-        
-        # 8. 세션 완료
+
+        # 7. 세션 완료
         self.storage.complete_session(
             final_response="분석 완료: DMA timeout 에러가 주요 원인입니다.",
             status="completed"
         )
-        print("\n6. 세션 완료")
-        
-        # 9. 히스토리 확인
+        print("\n5. 세션 완료")
+
+        # 8. 히스토리 확인
         history = self.storage.get_history()
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["status"], "completed")
-        
+
         print("=" * 50)
         print("[TEST] 전체 워크플로우 완료 ✓")
 
@@ -616,7 +526,6 @@ def run_tests():
         TestToolResult,
         TestActionSchema,
         TestFileTool,
-        TestWebTool,
         TestLLMTool,
         TestToolRegistry,
         TestToolIntegration,

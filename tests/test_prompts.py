@@ -26,7 +26,6 @@ from core.base_tool import ToolRegistry
 from core.orchestrator import Orchestrator, PlannedStep
 from core.workspace_manager import WorkspaceManager, ConfigManager
 from tools.file_tool import FileTool
-from tools.web_tool import WebTool
 from tools.llm_tool import LLMTool
 
 
@@ -55,7 +54,6 @@ def test_planning_prompt():
 
     # 도구 등록
     tools.register(FileTool())
-    tools.register(WebTool())
     tools.register(LLMTool())
 
     # Orchestrator 생성
@@ -163,7 +161,6 @@ def test_execution_params_prompt():
 
     # 도구 등록
     tools.register(FileTool())
-    tools.register(WebTool())
     tools.register(LLMTool())
 
     # Orchestrator 생성

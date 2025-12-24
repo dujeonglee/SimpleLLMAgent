@@ -195,10 +195,6 @@ class Orchestrator:
             llm_tool.set_llm_caller(self._call_llm_api)
             self.logger.info("LLMTool에 llm_caller 주입 완료")
 
-        if hasattr(llm_tool, 'set_previous_result_getter'):
-            llm_tool.set_previous_result_getter(self.storage.get_last_output)
-            self.logger.info("LLMTool에 previous_result_getter 주입 완료")
-
     def _get_known_actions(self) -> Dict[str, List[str]]:
         """등록된 tool들의 action 정보를 동적으로 가져오기"""
         known_actions = {}

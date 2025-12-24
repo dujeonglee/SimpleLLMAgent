@@ -16,13 +16,12 @@ from unittest.mock import Mock, patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.orchestrator import (
-    Orchestrator, LLMConfig, LLMResponse, ToolCall, 
+    Orchestrator, LLMConfig, LLMResponse, ToolCall,
     StepInfo, StepType
 )
 from core.shared_storage import SharedStorage
 from core.base_tool import ToolRegistry
 from tools.file_tool import FileTool
-from tools.web_tool import WebTool
 from tools.llm_tool import LLMTool
 
 
@@ -319,10 +318,10 @@ class TestOrchestratorExecution(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.storage = SharedStorage(debug_enabled=True)
         self.registry = ToolRegistry(debug_enabled=True)
-        
+
         self.file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
         self.registry.register(self.file_tool)
-        self.registry.register(WebTool(debug_enabled=True, use_mock=True))
+        self.registry.register(LLMTool(debug_enabled=True, use_mock=True))
         
         # 테스트 파일 생성
         self.file_tool.execute("write", {
@@ -587,12 +586,12 @@ class TestOrchestratorIntegration(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.storage = SharedStorage(debug_enabled=True)
         self.registry = ToolRegistry(debug_enabled=True)
-        
+
         self.file_tool = FileTool(base_path=self.test_dir, debug_enabled=True)
-        self.web_tool = WebTool(debug_enabled=True, use_mock=True)
-        
+        self.llm_tool = LLMTool(debug_enabled=True, use_mock=True)
+
         self.registry.register(self.file_tool)
-        self.registry.register(self.web_tool)
+        self.registry.register(self.llm_tool)
         
         # 테스트 파일
         self.file_tool.execute("write", {
@@ -604,17 +603,17 @@ class TestOrchestratorIntegration(unittest.TestCase):
         shutil.rmtree(self.test_dir)
     
     def test_full_workflow(self):
-        """전체 워크플로우: 파일 읽기 → 웹 검색 → 응답"""
+        """전체 워크플로우: 파일 읽기 → LLM 분석 → 응답"""
         print("\n[TEST] 전체 워크플로우")
         print("=" * 50)
-        
+
         orch = Orchestrator(
             tools=self.registry,
             storage=self.storage,
             max_steps=5,
             debug_enabled=True
         )
-        
+
         # 시뮬레이션된 LLM 응답
         step_responses = [
             # Step 1: 파일 읽기
@@ -625,12 +624,12 @@ class TestOrchestratorIntegration(unittest.TestCase):
                     "arguments": {"action": "read", "path": "error.log"}
                 }]
             }),
-            # Step 2: 웹 검색
+            # Step 2: LLM 분석
             json.dumps({
-                "thought": "DMA timeout에 대해 검색해보겠습니다",
+                "thought": "DMA timeout 에러를 분석해보겠습니다",
                 "tool_calls": [{
-                    "name": "web_tool",
-                    "arguments": {"action": "search", "keyword": "DMA timeout fix"}
+                    "name": "llm_tool",
+                    "arguments": {"action": "general", "prompt": "DMA timeout 에러 분석"}
                 }]
             }),
             # Step 3: 최종 답변
@@ -640,16 +639,16 @@ class TestOrchestratorIntegration(unittest.TestCase):
                 "content": "분석 결과: DMA timeout 에러가 발견되었습니다. 드라이버 업데이트를 권장합니다."
             })
         ]
-        
+
         call_idx = [0]
-        
+
         def mock_call_llm(system, user):
             response = step_responses[call_idx[0]]
             call_idx[0] += 1
             return response
-        
+
         orch._call_llm_api = mock_call_llm
-        
+
         # 실행 및 출력
         print("\n실행 시작...")
         for step in orch.run_stream("error.log 파일 분석하고 해결책 찾아줘"):
@@ -662,13 +661,13 @@ class TestOrchestratorIntegration(unittest.TestCase):
                 print(f"  📄 Result: {output}...")
             elif step.type == StepType.FINAL_ANSWER:
                 print(f"  ✅ Final: {step.content}")
-        
+
         # 검증 - 세션 완료 후에는 history에서 확인
         history = self.storage.get_history()
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["status"], "completed")
-        self.assertEqual(len(history[0]["results"]), 2)  # file_tool + web_tool
-        
+        self.assertEqual(len(history[0]["results"]), 2)  # file_tool + llm_tool
+
         print("=" * 50)
         print("[TEST] 전체 워크플로우 완료 ✓")
 

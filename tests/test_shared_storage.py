@@ -163,14 +163,14 @@ class TestSharedStorageResults(unittest.TestCase):
             output="분석 결과입니다"
         ))
         
-        # Step 3: web_tool
+        # Step 3: llm_tool
         self.storage.add_result(create_tool_result(
             step=3,
-            executor="web_tool",
+            executor="llm_tool",
             executor_type="tool",
-            action="search",
-            input={"keyword": "wifi driver"},
-            output={"results": ["url1", "url2"]}
+            action="general",
+            input={"prompt": "wifi driver 문제 해결 방법"},
+            output="드라이버 재설치를 권장합니다"
         ))
         
         results = self.storage.get_results()
@@ -642,11 +642,10 @@ class TestDataFlowScenario(unittest.TestCase):
         print("=" * 50)
         
         # 1. 세션 시작
-        user_query = "wifi.log 파일을 읽고 에러를 분석해서 관련 해결책을 찾아줘"
+        user_query = "wifi.log 파일을 읽고 에러를 분석해줘"
         plan = [
             "file_tool로 wifi.log 읽기",
-            "llm_tool로 에러 분석",
-            "web_tool로 해결책 검색"
+            "llm_tool로 에러 분석"
         ]
         
         session_id = self.storage.start_session(user_query, plan)
@@ -690,24 +689,7 @@ class TestDataFlowScenario(unittest.TestCase):
         self.storage.advance_step()
         print("3. Step 2 완료: llm_tool.analyze")
         
-        # 4. Step 3: web_tool 실행 (이전 output 사용)
-        analysis = self.storage.get_last_output()
-        search_keyword = analysis["suggested_keywords"][0]
-        
-        search_results = [
-            {"title": "DMA Timeout Fix Guide", "url": "https://example.com/fix"},
-            {"title": "WiFi Driver Troubleshooting", "url": "https://example.com/trouble"}
-        ]
-        self.storage.add_result(create_tool_result(
-            step=3,
-            executor="web_tool",
-            executor_type="tool",
-            action="search",
-            input={"keyword": search_keyword},
-            output=search_results
-        ))
-        self.storage.advance_step()
-        print("4. Step 3 완료: web_tool.search")
+        # Summary 전에 세션 완료
         
         # 5. Summary 확인
         summary = self.storage.get_summary()
@@ -718,25 +700,19 @@ class TestDataFlowScenario(unittest.TestCase):
         
         # 6. 모든 결과에서 데이터 흐름 확인
         results = self.storage.get_results()
-        
+
         # Step 1 → Step 2: file output이 llm input으로
         step1_output = self.storage.get_output_by_step(1)
         step2_input = results[1]["input"]["content"]
         self.assertEqual(step1_output, step2_input)
         print("\n6. 데이터 흐름 검증: Step 1 output → Step 2 input ✓")
         
-        # Step 2 → Step 3: analysis의 keyword가 search input으로
-        step2_output = self.storage.get_output_by_step(2)
-        step3_input = results[2]["input"]["keyword"]
-        self.assertEqual(step2_output["suggested_keywords"][0], step3_input)
-        print("   데이터 흐름 검증: Step 2 output → Step 3 input ✓")
-        
         # 7. 세션 완료
         final_response = """
 분석 결과:
 - wifi.log에서 2개의 에러 발견
 - 주요 이슈: DMA timeout
-- 해결책: https://example.com/fix 참고
+- 드라이버 재설치를 권장합니다
 """
         session = self.storage.complete_session(final_response)
         print(f"\n7. 세션 완료: {session.session_id}")

@@ -25,7 +25,6 @@ from core.base_tool import ToolRegistry
 from core.orchestrator import Orchestrator, StepType
 from core.workspace_manager import WorkspaceManager, ConfigManager
 from tools.file_tool import FileTool
-from tools.web_tool import WebTool
 from tools.llm_tool import LLMTool
 
 
@@ -66,9 +65,8 @@ class AppState:
         """Tools 설정"""
         files_dir = os.path.join(self.workspace_path, "files")
         os.makedirs(files_dir, exist_ok=True)
-        
+
         self.registry.register(FileTool(base_path=files_dir, debug_enabled=True))
-        self.registry.register(WebTool(debug_enabled=True, use_mock=False))
         self.registry.register(LLMTool(debug_enabled=True, use_mock=False))
     
     def update_llm_config(self, **kwargs):
