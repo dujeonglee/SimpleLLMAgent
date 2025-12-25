@@ -114,10 +114,6 @@ class PlannedStep:
     description: str
     params_hint: Dict = field(default_factory=dict)
     status: str = "pending"
-    
-    def to_dict(self) -> Dict:
-        return asdict(self)
-
 
 @dataclass
 class StepInfo:
@@ -1068,13 +1064,6 @@ Based on the above results, provide a final answer to the user's query."""
         response = self._call_llm_api(system_prompt, user_prompt)
         return response.strip()
     
-    def _is_complete(self) -> bool:
-        if self._stopped:
-            return True
-        if self._current_step >= self.max_steps:
-            return True
-        return False
-    
     # =========================================================================
     # LLM API & Parsing (변경 없음)
     # =========================================================================
@@ -1249,23 +1238,6 @@ Based on the above results, provide a final answer to the user's query."""
         except json.JSONDecodeError as e:
             self.logger.warn(f"JSON 파싱 실패: {str(e)}")
             return LLMResponse(content=raw_response, raw_response=raw_response)
-    
-    def _generate_partial_response(self) -> str:
-        """최대 step 도달 시 부분 응답"""
-        results = self.storage.get_results()
-        
-        if not results:
-            return "작업을 완료하지 못했습니다."
-        
-        last_result = results[-1]
-        return f"""최대 실행 단계({self.max_steps})에 도달했습니다.
-
-지금까지의 진행 상황:
-- 총 {len(results)}개의 작업 수행
-- 마지막 작업: {last_result['executor']}.{last_result['action']}
-
-부분 결과:
-{str(last_result.get('output', ''))[:500]}"""
     
     def _mock_llm_response(self) -> str:
         """테스트용 Mock 응답"""
