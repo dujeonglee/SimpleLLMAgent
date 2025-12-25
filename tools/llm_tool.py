@@ -136,6 +136,10 @@ class LLMTool(BaseTool):
                 name="general",
                 description="Handle general queries, questions, and tasks that don't fit into specialized categories. Free-form interaction with LLM for any other purpose.",
                 params=[
+                    ActionParam("general_content", "str", False,
+                               "Content or context for the query (optional, provide either content or file_path)", None),
+                    ActionParam("general_file_path", "str", False,
+                               f"File path to read content from, relative to base_path ({self.base_path}) (optional, provide either content or file_path)", None),
                     ActionParam("general_prompt", "str", True,
                                "Your question, request, or instruction for the LLM"),
                 ],
@@ -182,6 +186,8 @@ class LLMTool(BaseTool):
             )
         elif action == "general":
             return self._general(
+                get_param("content"),
+                get_param("file_path"),
                 get_param("prompt")
             )
         else:
@@ -458,13 +464,29 @@ Provide the complete code with explanatory comments."""
         except Exception as e:
             return ToolResult.error_result(f"Code generation failed: {str(e)}")
 
-    def _general(self, prompt: str) -> ToolResult:
+    def _general(self, content: Optional[str], file_path: Optional[str], prompt: str) -> ToolResult:
         """Handle general queries"""
+        # Get content if provided
+        context_content = ""
+        if content or file_path:
+            context_content, error = self._get_content(content, file_path)
+            if error:
+                return ToolResult.error_result(error)
+
         system_prompt = """You are a helpful AI assistant.
 Answer questions clearly and concisely.
 Provide accurate, well-reasoned responses."""
 
-        user_prompt = prompt
+        # Build user prompt with optional content context
+        if context_content:
+            user_prompt = f"""Context:
+```
+{context_content}
+```
+
+Question/Request: {prompt}"""
+        else:
+            user_prompt = prompt
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
@@ -472,7 +494,9 @@ Provide accurate, well-reasoned responses."""
                 output=response,
                 metadata={
                     "action": "general",
-                    "prompt_length": len(prompt)
+                    "prompt_length": len(prompt),
+                    "has_context": bool(context_content),
+                    "context_length": len(context_content) if context_content else 0
                 }
             )
         except Exception as e:
