@@ -259,111 +259,12 @@ class Orchestrator:
                 return
 
             # Phase 2: Execution
-            for planned_step in self._plan:
-                self._current_step = planned_step.step
-                planned_step.status = "running"
-                
-                yield StepInfo(
-                    type=StepType.THINKING,
-                    step=self._current_step,
-                    content=f"Step {self._current_step}: {planned_step.description}"
-                )
-                
-                # LLM 호출 전 중지 체크
-                if self._stopped:
-                    self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                    yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+            for step_info in self._execute_plan(user_query):
+                yield step_info
+
+                # Execution이 error로 끝나면 종료
+                if step_info.type == StepType.ERROR:
                     return
-                
-                execution_response = self._get_execution_params(user_query, planned_step)
-                
-                # LLM 호출 후 중지 체크
-                if self._stopped:
-                    self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                    yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
-                    return
-                
-                if execution_response.thought:
-                    yield StepInfo(
-                        type=StepType.THINKING,
-                        step=self._current_step,
-                        content=execution_response.thought
-                    )
-
-                # Check if tool_calls is empty - this is an error since we expect exactly one tool call per step
-                if not execution_response.tool_calls:
-                    error_msg = f"LLM failed to generate tool_call for Step {self._current_step} ({planned_step.tool_name}.{planned_step.action}). Expected exactly one tool call."
-                    self.logger.error(error_msg, {
-                        "step": self._current_step,
-                        "planned_tool": planned_step.tool_name,
-                        "planned_action": planned_step.action,
-                        "llm_thought": execution_response.thought
-                    })
-
-                    planned_step.status = "failed"
-
-                    yield StepInfo(
-                        type=StepType.ERROR,
-                        step=self._current_step,
-                        content=f"⚠️ Step {self._current_step} failed: {error_msg}\n\nLLM response: {execution_response.thought or 'No explanation provided'}"
-                    )
-                    # Continue to next step instead of stopping entirely
-                    continue
-
-                if execution_response.tool_calls:
-                    for tool_call in execution_response.tool_calls:
-                        # Tool 실행 전 중지 체크
-                        if self._stopped:
-                            self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
-                            return
-                        
-                        yield StepInfo(
-                            type=StepType.TOOL_CALL,
-                            step=self._current_step,
-                            content=tool_call.arguments,
-                            tool_name=tool_call.name,
-                            action=tool_call.action
-                        )
-
-                        # Tool 실행 (자동 재시도 포함)
-                        result = self._execute_tool_with_retry(tool_call, planned_step, max_retries=2)
-
-                        # Tool 실행 후 중지 체크
-                        if self._stopped:
-                            self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
-                            return
-
-                        # ToolResult를 그대로 전달
-                        self.storage.add_result(result)
-                        
-                        planned_step.status = "completed" if result.success else "failed"
-                        
-                        yield StepInfo(
-                            type=StepType.TOOL_RESULT,
-                            step=self._current_step,
-                            content=result.output if result.success else result.error,
-                            tool_name=tool_call.name,
-                            action=tool_call.action
-                        )
-                    # inner loop에서 중지된 경우
-                    if self._stopped:
-                        self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                        yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
-                        return
-                if self.on_step_complete:
-                    self.on_step_complete(StepInfo(
-                        type=StepType.TOOL_RESULT,
-                        step=self._current_step,
-                        content="Step completed"
-                    ))
-            
-            # 중지된 경우 Final Answer 생성 스킵
-            if self._stopped:
-                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
-                return
             
             # Phase 3: Final Answer
             yield StepInfo(
@@ -760,7 +661,118 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
         except Exception as e:
             self.logger.error(f"Plan 파싱 실패: {e}")
             return {"direct_answer": f"계획 수립 중 오류가 발생했습니다: {str(e)}"}
-    
+
+    # =========================================================================
+    # Execution Methods
+    # =========================================================================
+
+    def _execute_plan(self, user_query: str) -> Generator[StepInfo, None, None]:
+        """Phase 2: 계획된 단계들을 순차적으로 실행"""
+        for planned_step in self._plan:
+            self._current_step = planned_step.step
+            planned_step.status = "running"
+
+            yield StepInfo(
+                type=StepType.THINKING,
+                step=self._current_step,
+                content=f"Step {self._current_step}: {planned_step.description}"
+            )
+
+            # LLM 호출 전 중지 체크
+            if self._stopped:
+                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                return
+
+            execution_response = self._get_execution_params(user_query, planned_step)
+
+            # LLM 호출 후 중지 체크
+            if self._stopped:
+                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                return
+
+            if execution_response.thought:
+                yield StepInfo(
+                    type=StepType.THINKING,
+                    step=self._current_step,
+                    content=execution_response.thought
+                )
+
+            # Check if tool_calls count is not exactly 1
+            tool_calls_count = len(execution_response.tool_calls) if execution_response.tool_calls else 0
+            if tool_calls_count != 1:
+                error_msg = f"LLM failed to generate exactly one tool_call for Step {self._current_step} ({planned_step.tool_name}.{planned_step.action}). Expected 1, got {tool_calls_count}."
+                self.logger.error(error_msg, {
+                    "step": self._current_step,
+                    "planned_tool": planned_step.tool_name,
+                    "planned_action": planned_step.action,
+                    "tool_calls_count": tool_calls_count,
+                    "llm_thought": execution_response.thought
+                })
+
+                planned_step.status = "failed"
+
+                yield StepInfo(
+                    type=StepType.ERROR,
+                    step=self._current_step,
+                    content=f"⚠️ Step {self._current_step} failed: {error_msg}\n\nLLM response: {execution_response.thought or 'No explanation provided'}"
+                )
+                # Continue to next step instead of stopping entirely
+                continue
+
+            # Execute the single tool call
+            tool_call = execution_response.tool_calls[0]
+
+            # Tool 실행 전 중지 체크
+            if self._stopped:
+                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                return
+
+            yield StepInfo(
+                type=StepType.TOOL_CALL,
+                step=self._current_step,
+                content=tool_call.arguments,
+                tool_name=tool_call.name,
+                action=tool_call.action
+            )
+
+            # Tool 실행 (자동 재시도 포함)
+            result = self._execute_tool_with_retry(tool_call, planned_step, max_retries=2)
+
+            # Tool 실행 후 중지 체크
+            if self._stopped:
+                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                return
+
+            # ToolResult를 그대로 전달
+            self.storage.add_result(result)
+
+            planned_step.status = "completed" if result.success else "failed"
+
+            yield StepInfo(
+                type=StepType.TOOL_RESULT,
+                step=self._current_step,
+                content=result.output if result.success else result.error,
+                tool_name=tool_call.name,
+                action=tool_call.action
+            )
+
+            if self.on_step_complete:
+                self.on_step_complete(StepInfo(
+                    type=StepType.TOOL_RESULT,
+                    step=self._current_step,
+                    content="Step completed"
+                ))
+
+        # 중지된 경우 Final Answer 생성 스킵
+        if self._stopped:
+            self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+            return
+
     def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> LLMResponse:
         """
         계획된 step 실행을 위한 정확한 파라미터 결정
