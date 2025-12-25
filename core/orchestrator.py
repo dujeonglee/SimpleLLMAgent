@@ -265,24 +265,10 @@ class Orchestrator:
                 # Execution이 error로 끝나면 종료
                 if step_info.type == StepType.ERROR:
                     return
-            
+
             # Phase 3: Final Answer
-            yield StepInfo(
-                type=StepType.THINKING,
-                step=self._current_step + 1,
-                content="최종 응답 생성 중..."
-            )
-            
-            if self._stopped:
-                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
-                return
-            
-            final_response = self._generate_final_answer(user_query)
-            
-            self.storage.complete_session(final_response=final_response, status="completed")
-            
-            yield StepInfo(type=StepType.FINAL_ANSWER, step=self._current_step + 1, content=final_response)
+            for step_info in self._generate_final_answer_stream(user_query):
+                yield step_info
         
         except Exception as e:
             error_msg = f"실행 중 오류 발생: {str(e)}"
@@ -772,6 +758,30 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
             self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
             yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
             return
+
+    def _generate_final_answer_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
+        """Phase 3: 최종 응답 생성"""
+        # 1. Thinking 시작
+        yield StepInfo(
+            type=StepType.THINKING,
+            step=self._current_step + 1,
+            content="최종 응답 생성 중..."
+        )
+
+        # 2. 중지 체크
+        if self._stopped:
+            self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+            return
+
+        # 3. 최종 응답 생성
+        final_response = self._generate_final_answer(user_query)
+
+        # 4. 세션 완료
+        self.storage.complete_session(final_response=final_response, status="completed")
+
+        # 5. 최종 응답 반환
+        yield StepInfo(type=StepType.FINAL_ANSWER, step=self._current_step + 1, content=final_response)
 
     def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> LLMResponse:
         """
