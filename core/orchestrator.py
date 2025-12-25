@@ -170,6 +170,7 @@ class Orchestrator:
         self._current_step = 0
         self._plan: List[PlannedStep] = []
         self._session_id: Optional[str] = None
+        self._needs_tools: bool = True  # 기본값: 툴 필요
         
         # LLMTool 연동
         self._setup_llm_tool()
@@ -228,6 +229,7 @@ class Orchestrator:
         self._stopped = False
         self._current_step = 0
         self._plan = []
+        self._needs_tools = True
         self._session_id = self.storage.start_session(user_query)
         self.logger.info(f"실행 시작: {user_query[:50]}...")
 
@@ -524,7 +526,11 @@ Respond with JSON only."""
             yield StepInfo(type=StepType.ERROR, step=0, content="사용자 요청으로 취소됨")
             return
 
-        # 3. LLM 호출하여 plan 생성
+        # 3. Query classification - 툴 필요 여부 판단
+        self._needs_tools = self._classify_query(user_query)
+        self.logger.debug("Query classification 완료", {"needs_tools": self._needs_tools})
+
+        # 4. LLM 호출하여 plan 생성 (또는 direct answer)
         plan_response = self._call_plan_llm(user_query)
 
         # 4. Direct answer 처리
@@ -550,24 +556,79 @@ Respond with JSON only."""
         plan_summary = self._format_plan_summary()
         yield StepInfo(type=StepType.PLAN_READY, step=0, content=plan_summary)
 
-    def _call_plan_llm(self, user_query: str) -> Dict:
-        """LLM에 계획 수립 요청"""
-        tools_schema = json.dumps(
-            self.tools.get_all_schemas(),
-            indent=2,
-            ensure_ascii=False
-        )
+    def _classify_query(self, user_query: str) -> bool:
+        """Query가 툴 사용이 필요한지 판단"""
+        tools_list = "\n".join([f"- {name}: {tool.get_schema().get('description', 'No description')}"
+                                for name, tool in self.tools._tools.items()])
 
-        system_prompt = f"""You are a task planning expert. Analyze the user's request and create an execution plan.
+        system_prompt = f"""You are a query classifier. Determine if the user's query requires using tools or can be answered directly.
+
+## Available Tools
+{tools_list}
+
+## Your Task
+Analyze if the query needs tool usage (file operations, code analysis, web search, etc.) or can be answered with general knowledge.
+
+## Response Format (JSON only)
+{{
+    "needs_tools": true/false,
+    "reasoning": "Brief explanation"
+}}"""
+
+        user_prompt = f"""## User Query
+{user_query}
+
+Does this query require tool usage? Respond with JSON only."""
+
+        self.logger.debug("Query classification 시작")
+
+        raw_response = self._call_llm_api(system_prompt, user_prompt)
+
+        try:
+            parsed = self._extract_json(raw_response)
+            needs_tools = parsed.get("needs_tools", True)  # 기본값: True (안전)
+            self.logger.debug("Classification 결과", {
+                "needs_tools": needs_tools,
+                "reasoning": parsed.get("reasoning", "")
+            })
+            return needs_tools
+        except Exception as e:
+            self.logger.warn(f"Classification 파싱 실패, 기본값(True) 사용: {e}")
+            return True  # 파싱 실패 시 안전하게 True 반환
+
+    def _call_plan_llm(self, user_query: str) -> Dict:
+        """LLM에 계획 수립 또는 direct answer 요청"""
+        if not self._needs_tools:
+            # 툴이 필요 없는 경우: direct answer 생성
+            system_prompt = """You are a helpful AI assistant. Answer the user's question directly and concisely.
+
+## Response Format (JSON only)
+{
+    "direct_answer": "Your answer here"
+}"""
+
+            user_prompt = f"""## User Query
+{user_query}
+
+Provide a direct answer. Respond with JSON only."""
+
+        else:
+            # 툴이 필요한 경우: 기존 planning 로직
+            tools_schema = json.dumps(
+                self.tools.get_all_schemas(),
+                indent=2,
+                ensure_ascii=False
+            )
+
+            system_prompt = f"""You are a task planning expert. Analyze the user's request and create an execution plan.
 
 ## Available Tools
 {tools_schema}
 
 ## Your Task
 1. Analyze what the user wants
-2. Decide if tools are needed
-3. If yes, create a step-by-step plan
-4. If no tools needed, provide direct answer
+2. Create a step-by-step plan using available tools
+3. If plan cannot be created, provide direct answer explaining why
 
 ## IMPORTANT: Data Flow Between Steps
 - Each step's output becomes available for the next step with a unique result ID
@@ -614,12 +675,16 @@ If no tools needed:
 - Order steps logically (data dependencies)
 - Respond with valid JSON only"""
 
-        user_prompt = f"""## User Request
+            user_prompt = f"""## User Request
 {user_query}
 
-Create an execution plan or provide direct answer. Respond with JSON only."""
+Create an execution plan. Respond with JSON only."""
 
-        self.logger.debug("Planning 호출", {"query": user_query[:50]})
+        # 공통: LLM 호출 및 파싱
+        self.logger.debug("Planning 호출", {
+            "query": user_query[:50],
+            "needs_tools": self._needs_tools
+        })
 
         raw_response = self._call_llm_api(system_prompt, user_prompt)
 
@@ -627,7 +692,8 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
             parsed = self._extract_json(raw_response)
             self.logger.debug("Plan 생성 완료", {
                 "has_plan": "plan" in parsed,
-                "has_direct_answer": "direct_answer" in parsed
+                "has_direct_answer": "direct_answer" in parsed,
+                "needs_tools": self._needs_tools
             })
             return parsed
         except Exception as e:
