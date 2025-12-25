@@ -98,11 +98,28 @@ class LLMResponse:
 class StepType(Enum):
     PLANNING = "planning"
     PLAN_READY = "plan_ready"
+    PLAN_REVIEW = "plan_review"
+    PLAN_REVISE = "plan_revise"
+    PLAN_APPROVED = "plan_approved"
     THINKING = "thinking"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     FINAL_ANSWER = "final_answer"
     ERROR = "error"
+
+
+class ChatState(Enum):
+    """Chat 실행 상태"""
+    PLANNING = "planning"
+    PLAN_READY = "plan_ready"
+    PLAN_REVIEW = "plan_review"
+    PLAN_REVISE = "plan_revise"
+    PLAN_APPROVED = "plan_approved"
+    THINKING = "thinking"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    ERROR = "error"
+    FINAL_ANSWER = "final_answer"
 
 
 @dataclass
@@ -169,14 +186,19 @@ class Orchestrator:
         self.max_steps = max_steps
         self.on_step_complete = on_step_complete
         self.logger = DebugLogger("Orchestrator", enabled=debug_enabled)
-        
+
         self._stopped = False
         self._current_step = 0
         self._plan: List[PlannedStep] = []
-        
+
+        # 상태 관리
+        self._current_state: ChatState = ChatState.PLANNING
+        self._user_query: str = ""
+        self._context: Dict[str, Any] = {}  # 상태 간 데이터 전달용
+
         # LLMTool 연동
         self._setup_llm_tool()
-        
+
         self.logger.info("Orchestrator 초기화", {
             "max_steps": max_steps,
             "llm_model": self.llm_config.model,
@@ -227,13 +249,291 @@ class Orchestrator:
         self.logger.info("실행 중지 요청됨")
     
     def run(self, user_query: str) -> str:
-        """동기 실행"""
+        """
+        동기 실행 - 상태 머신 패턴
+
+        PLANNING → PLAN_READY → PLAN_REVIEW → PLAN_APPROVED → THINKING → TOOL_CALL →
+        TOOL_RESULT → THINKING → ... → FINAL_ANSWER
+        """
+        self._stopped = False
+        self._current_step = 0
+        self._plan = []
+        self._user_query = user_query
+        self._current_state = ChatState.PLANNING
+
+        session_id = self.storage.start_session(user_query)
+        self.logger.info(f"실행 시작: {user_query[:50]}...")
+
         final_response = ""
-        for step_info in self.run_stream(user_query):
-            if step_info.type == StepType.FINAL_ANSWER:
-                final_response = step_info.content
+
+        # 상태 머신 루프: FINAL_ANSWER 상태가 될 때까지 계속 실행
+        while self._current_state != ChatState.FINAL_ANSWER:
+            if self._stopped:
+                final_response = "사용자 요청으로 취소됨"
+                self.storage.complete_session(final_response=final_response, status="error")
+                break
+
+            # 현재 상태에 따라 작업 수행하고 다음 상태로 천이
+            result = self._process_current_state(user_query)
+
+            # result에서 다음 상태와 출력 정보 추출
+            next_state = result.get("next_state")
+            output = result.get("output", "")
+
+            # 에러 처리
+            if next_state == ChatState.ERROR:
+                final_response = output
+                self.storage.complete_session(final_response=final_response, status="error")
+                break
+
+            # FINAL_ANSWER 상태에서는 최종 응답 저장
+            if next_state == ChatState.FINAL_ANSWER:
+                final_response = output
+                self.storage.complete_session(final_response=final_response, status="completed")
+                self._current_state = next_state
+                break
+
+            # 상태 천이
+            self._transition_to(next_state)
+
         return final_response
-    
+
+    def _transition_to(self, new_state: ChatState):
+        """상태 천이"""
+        old_state = self._current_state
+        self._current_state = new_state
+        self.logger.info(f"State transition: {old_state.value} → {new_state.value}")
+
+    def _process_current_state(self, user_query: str) -> Dict:
+        """
+        현재 상태에 따라 작업을 수행하고 다음 상태와 결과를 반환
+
+        Returns:
+            Dict: {
+                "next_state": ChatState,
+                "output": Any,
+                ... 기타 다음 상태로 전달할 데이터들 ...
+            }
+        """
+        # Switch-case 패턴
+        result = {}
+
+        if self._current_state == ChatState.PLANNING:
+            result = self._handle_planning(user_query)
+
+        elif self._current_state == ChatState.PLAN_READY:
+            result = self._handle_plan_ready()
+
+        elif self._current_state == ChatState.PLAN_REVIEW:
+            result = self._handle_plan_review()
+
+        elif self._current_state == ChatState.PLAN_REVISE:
+            result = self._handle_plan_revise()
+
+        elif self._current_state == ChatState.PLAN_APPROVED:
+            result = self._handle_plan_approved()
+
+        elif self._current_state == ChatState.THINKING:
+            result = self._handle_thinking(user_query)
+
+        elif self._current_state == ChatState.TOOL_CALL:
+            result = self._handle_tool_call()
+
+        elif self._current_state == ChatState.TOOL_RESULT:
+            result = self._handle_tool_result()
+
+        elif self._current_state == ChatState.ERROR:
+            result = {"next_state": ChatState.ERROR, "output": "Error occurred"}
+
+        else:
+            result = {"next_state": ChatState.ERROR, "output": f"Unknown state: {self._current_state}"}
+
+        # 반환된 모든 데이터를 context에 저장 (next_state, output 제외)
+        self._context = {k: v for k, v in result.items() if k not in ["next_state", "output"]}
+
+        return result
+
+    # =========================================================================
+    # State Handlers
+    # =========================================================================
+
+    def _handle_planning(self, user_query: str) -> Dict:
+        """PLANNING 상태 처리: 계획 수립"""
+        self.logger.info("Planning 시작")
+
+        try:
+            plan_response = self._create_plan(user_query)
+
+            # Direct answer인 경우
+            if plan_response.get("direct_answer"):
+                return {
+                    "next_state": ChatState.FINAL_ANSWER,
+                    "output": plan_response["direct_answer"]
+                }
+
+            # Plan 파싱
+            self._plan = self._parse_plan(plan_response.get("plan", []))
+
+            if not self._plan:
+                return {
+                    "next_state": ChatState.FINAL_ANSWER,
+                    "output": plan_response.get("thought", "요청을 처리할 수 없습니다.")
+                }
+
+            # 계획 수립 완료
+            return {
+                "next_state": ChatState.PLAN_READY,
+                "output": self._format_plan_summary()
+            }
+
+        except Exception as e:
+            error_msg = f"계획 수립 중 오류 발생: {str(e)}"
+            self.logger.error(error_msg)
+            return {
+                "next_state": ChatState.ERROR,
+                "output": error_msg
+            }
+
+    def _handle_plan_ready(self) -> Dict:
+        """PLAN_READY 상태 처리: 자동 승인 또는 리뷰 요청"""
+        # 여기서는 자동 승인으로 진행 (리뷰 기능은 나중에 추가 가능)
+        return {
+            "next_state": ChatState.PLAN_APPROVED,
+            "output": "계획이 승인되었습니다."
+        }
+
+    def _handle_plan_review(self) -> Dict:
+        """PLAN_REVIEW 상태 처리: 사용자 리뷰 대기 (현재는 미구현)"""
+        # TODO: 사용자 리뷰 입력 받기
+        return {
+            "next_state": ChatState.PLAN_APPROVED,
+            "output": "리뷰 완료"
+        }
+
+    def _handle_plan_revise(self) -> Dict:
+        """PLAN_REVISE 상태 처리: 계획 수정 (현재는 미구현)"""
+        # TODO: 계획 수정 로직
+        return {
+            "next_state": ChatState.PLAN_READY,
+            "output": "계획 수정 완료"
+        }
+
+    def _handle_plan_approved(self) -> Dict:
+        """PLAN_APPROVED 상태 처리: 실행 시작"""
+        if not self._plan:
+            return {
+                "next_state": ChatState.FINAL_ANSWER,
+                "output": "실행할 계획이 없습니다."
+            }
+
+        # 첫 번째 step 준비
+        self._current_step = 0
+        return {
+            "next_state": ChatState.THINKING,
+            "output": "실행 시작"
+        }
+
+    def _handle_thinking(self, user_query: str) -> Dict:
+        """THINKING 상태 처리: 다음 도구 호출 결정"""
+        # 모든 step을 완료했는지 확인
+        if self._current_step >= len(self._plan):
+            # 모든 step 완료 → Final Answer 생성
+            try:
+                final_response = self._generate_final_answer(user_query)
+                return {
+                    "next_state": ChatState.FINAL_ANSWER,
+                    "output": final_response
+                }
+            except Exception as e:
+                return {
+                    "next_state": ChatState.ERROR,
+                    "output": f"최종 응답 생성 실패: {str(e)}"
+                }
+
+        # 다음 step 실행 준비
+        planned_step = self._plan[self._current_step]
+        planned_step.status = "running"
+
+        self.logger.info(f"Step {planned_step.step}: {planned_step.description}")
+
+        try:
+            # LLM에 파라미터 요청
+            execution_response = self._get_execution_params(user_query, planned_step)
+
+            if not execution_response.tool_calls:
+                # Tool call이 없으면 에러
+                error_msg = f"LLM failed to generate tool_call for Step {planned_step.step}"
+                self.logger.error(error_msg)
+                planned_step.status = "failed"
+                # 다음 step으로 진행 (실패했지만 계속 시도)
+                self._current_step += 1
+                return {
+                    "next_state": ChatState.THINKING,
+                    "output": error_msg
+                }
+
+            # Tool call이 있으면 TOOL_CALL 상태로 전환하면서 tool_call 전달
+            tool_call = execution_response.tool_calls[0]
+            return {
+                "next_state": ChatState.TOOL_CALL,
+                "output": f"Tool 호출 준비: {tool_call.name}.{tool_call.action}",
+                "tool_call": tool_call,  # 다음 상태로 전달
+                "planned_step": planned_step
+            }
+
+        except Exception as e:
+            error_msg = f"Thinking 단계 오류: {str(e)}"
+            self.logger.error(error_msg)
+            return {
+                "next_state": ChatState.ERROR,
+                "output": error_msg
+            }
+
+    def _handle_tool_call(self) -> Dict:
+        """TOOL_CALL 상태 처리: 도구 실행"""
+        # context에서 tool_call과 planned_step 가져오기
+        tool_call = self._context.get("tool_call")
+        planned_step = self._context.get("planned_step")
+
+        if not tool_call or not planned_step:
+            return {
+                "next_state": ChatState.ERROR,
+                "output": "실행할 tool call 정보가 없습니다."
+            }
+
+        try:
+            # Tool 실행 (재시도 포함)
+            result = self._execute_tool_with_retry(tool_call, planned_step, max_retries=2)
+
+            # 결과 저장
+            self.storage.add_result(result)
+            planned_step.status = "completed" if result.success else "failed"
+
+            return {
+                "next_state": ChatState.TOOL_RESULT,
+                "output": result.output if result.success else result.error,
+                "tool_result": result
+            }
+
+        except Exception as e:
+            error_msg = f"Tool 실행 오류: {str(e)}"
+            self.logger.error(error_msg)
+            return {
+                "next_state": ChatState.ERROR,
+                "output": error_msg
+            }
+
+    def _handle_tool_result(self) -> Dict:
+        """TOOL_RESULT 상태 처리: 결과 처리 후 다음 step으로"""
+        # 현재 step 증가
+        self._current_step += 1
+
+        # Thinking 상태로 돌아가서 다음 step 처리
+        return {
+            "next_state": ChatState.THINKING,
+            "output": "Tool 실행 완료, 다음 step으로 이동"
+        }
+
     def run_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
         """Streaming 실행 - Plan & Execute 패턴"""
         self._stopped = False
