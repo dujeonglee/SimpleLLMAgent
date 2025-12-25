@@ -224,18 +224,19 @@ class Orchestrator:
         self._stopped = True
         self.logger.info("실행 중지 요청됨")
 
-    def _initialize_session(self, user_query: str):
+    def _initialize_session(self, user_query: str, files_context: str = ""):
         """세션 초기화"""
         self._stopped = False
         self._current_step = 0
         self._plan = []
         self._needs_tools = True
+        self._files_context = files_context
         self._session_id = self.storage.start_session(user_query)
         self.logger.info(f"실행 시작: {user_query[:50]}...")
 
-    def run_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
+    def run_stream(self, user_query: str, files_context: str = "") -> Generator[StepInfo, None, None]:
         """Streaming 실행 - Plan & Execute 패턴"""
-        self._initialize_session(user_query)
+        self._initialize_session(user_query, files_context)
 
         try:
             # Phase 1: Planning
@@ -675,7 +676,16 @@ If no tools needed:
 - Order steps logically (data dependencies)
 - Respond with valid JSON only"""
 
-            user_prompt = f"""## User Request
+            # _needs_tools=True일 때만 files_context 추가
+            if self._files_context:
+                user_prompt = f"""## User Request
+{user_query}
+
+{self._files_context}
+
+Create an execution plan. Respond with JSON only."""
+            else:
+                user_prompt = f"""## User Request
 {user_query}
 
 Create an execution plan. Respond with JSON only."""

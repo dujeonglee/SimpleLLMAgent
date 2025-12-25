@@ -211,16 +211,15 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
         yield history, gr.update(interactive=False), gr.update(interactive=True)
         return
     
-    # 파일 목록을 context에 추가
+    # 파일 목록을 context로 준비 (orchestrator에 전달)
     files_context = state.workspace_manager.get_files_for_prompt()
-    full_query = f"{message}\n\n{files_context}"
-    
+
     # 새 대화 추가 (user 메시지)
     history = history + [
         {"role": "user", "content": message},
         {"role": "assistant", "content": ""}
     ]
-    
+
     # 상태 변수
     plan_content = ""
     step_outputs = []
@@ -228,12 +227,12 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
     final_answer = ""
     current_step_info = {}
     was_stopped = False
-    
+
     # 초기 상태 표시
     yield history, gr.update(interactive=False), gr.update(interactive=True)
-    
+
     try:
-        for step in state.orchestrator.run_stream(full_query):
+        for step in state.orchestrator.run_stream(message, files_context):
             # ===== 중지 체크 =====
             if state.orchestrator._stopped:
                 was_stopped = True
