@@ -169,7 +169,6 @@ class Orchestrator:
         self._stopped = False
         self._current_step = 0
         self._plan: List[PlannedStep] = []
-        self._plan_completed = False
         self._session_id: Optional[str] = None
         
         # LLMTool 연동
@@ -229,7 +228,6 @@ class Orchestrator:
         self._stopped = False
         self._current_step = 0
         self._plan = []
-        self._plan_completed = False
         self._session_id = self.storage.start_session(user_query)
         self.logger.info(f"실행 시작: {user_query[:50]}...")
 
@@ -245,18 +243,6 @@ class Orchestrator:
                 # Plan이 direct answer나 error로 끝나면 종료
                 if step_info.type in (StepType.FINAL_ANSWER, StepType.ERROR):
                     return
-
-                # Plan 준비 완료
-                if step_info.type == StepType.PLAN_READY:
-                    self._plan_completed = True
-
-            # Plan이 완료되지 않았으면 크리티컬 에러 (이 코드에 도달하면 안 됨)
-            if not self._plan_completed:
-                error_msg = "CRITICAL: Plan phase ended without PLAN_READY, FINAL_ANSWER, or ERROR"
-                self.logger.error(error_msg, {"session_id": self._session_id})
-                self.storage.complete_session(final_response=error_msg, status="error")
-                yield StepInfo(type=StepType.ERROR, step=0, content=error_msg)
-                return
 
             # Phase 2: Execution
             for step_info in self._execute_plan(user_query):
@@ -654,6 +640,14 @@ Create an execution plan or provide direct answer. Respond with JSON only."""
 
     def _execute_plan(self, user_query: str) -> Generator[StepInfo, None, None]:
         """Phase 2: 계획된 단계들을 순차적으로 실행"""
+        # Precondition: Plan이 존재해야 함
+        if not self._plan:
+            error_msg = "CRITICAL: _execute_plan called with empty plan"
+            self.logger.error(error_msg, {"session_id": self._session_id})
+            self.storage.complete_session(final_response=error_msg, status="error")
+            yield StepInfo(type=StepType.ERROR, step=0, content=error_msg)
+            return
+
         for planned_step in self._plan:
             self._current_step = planned_step.step
             planned_step.status = "running"
