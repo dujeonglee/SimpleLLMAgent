@@ -1140,10 +1140,6 @@ Provide exact parameters for this step. Respond with JSON only."""
             output = str(r.get("output", ""))
             error = str(r.get("error", ""))
             
-            # 출력 길이 제한
-            if len(output) > 100:
-                output = output[:100] + "... (truncated)"
-            
             status_icon = "✅" if status == "success" else "❌"
             
             formatted += f"""
