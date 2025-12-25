@@ -165,10 +165,12 @@ class Orchestrator:
         self.max_steps = max_steps
         self.on_step_complete = on_step_complete
         self.logger = DebugLogger("Orchestrator", enabled=debug_enabled)
-        
+
         self._stopped = False
         self._current_step = 0
         self._plan: List[PlannedStep] = []
+        self._plan_completed = False
+        self._session_id: Optional[str] = None
         
         # LLMTool 연동
         self._setup_llm_tool()
@@ -224,42 +226,36 @@ class Orchestrator:
 
     def run_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
         """Streaming 실행 - Plan & Execute 패턴"""
+        # 상태 초기화
         self._stopped = False
         self._current_step = 0
         self._plan = []
-        
-        session_id = self.storage.start_session(user_query)
+        self._plan_completed = False
+        self._session_id = self.storage.start_session(user_query)
+
         self.logger.info(f"실행 시작: {user_query[:50]}...")
-        
+
         try:
-            yield StepInfo(type=StepType.PLANNING, step=0, content="작업 계획 수립 중...")
-            
-            plan_response = self._create_plan(user_query)
-            
-            if self._stopped:
-                self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+            # Phase 1: Planning
+            for step_info in self._create_plan(user_query):
+                yield step_info
+
+                # Plan이 direct answer나 error로 끝나면 종료
+                if step_info.type in (StepType.FINAL_ANSWER, StepType.ERROR):
+                    return
+
+                # Plan 준비 완료
+                if step_info.type == StepType.PLAN_READY:
+                    self._plan_completed = True
+
+            # Plan이 완료되지 않았으면 크리티컬 에러 (이 코드에 도달하면 안 됨)
+            if not self._plan_completed:
+                error_msg = "CRITICAL: Plan phase ended without PLAN_READY, FINAL_ANSWER, or ERROR"
+                self.logger.error(error_msg, {"session_id": self._session_id})
+                self.storage.complete_session(final_response=error_msg, status="error")
+                yield StepInfo(type=StepType.ERROR, step=0, content=error_msg)
                 return
-            
-            if plan_response.get("direct_answer"):
-                self.storage.complete_session(
-                    final_response=plan_response["direct_answer"],
-                    status="completed"
-                )
-                yield StepInfo(type=StepType.FINAL_ANSWER, step=0, content=plan_response["direct_answer"])
-                return
-            
-            self._plan = self._parse_plan(plan_response.get("plan", []))
-            
-            if not self._plan:
-                direct_response = plan_response.get("thought", "요청을 처리할 수 없습니다.")
-                self.storage.complete_session(final_response=direct_response, status="completed")
-                yield StepInfo(type=StepType.FINAL_ANSWER, step=0, content=direct_response)
-                return
-            
-            plan_summary = self._format_plan_summary()
-            yield StepInfo(type=StepType.PLAN_READY, step=0, content=plan_summary)
-            
+
             # Phase 2: Execution
             for planned_step in self._plan:
                 self._current_step = planned_step.step
@@ -642,14 +638,51 @@ Respond with JSON only."""
     # Planning Methods
     # =========================================================================
     
-    def _create_plan(self, user_query: str) -> Dict:
-        """Phase 1: 전체 실행 계획 수립"""
+    def _create_plan(self, user_query: str) -> Generator[StepInfo, None, None]:
+        """Phase 1: 전체 실행 계획 수립 및 초기 응답 생성"""
+        # 1. Planning 시작
+        yield StepInfo(type=StepType.PLANNING, step=0, content="작업 계획 수립 중...")
+
+        # 2. 중지 체크
+        if self._stopped:
+            self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
+            yield StepInfo(type=StepType.ERROR, step=0, content="사용자 요청으로 취소됨")
+            return
+
+        # 3. LLM 호출하여 plan 생성
+        plan_response = self._call_plan_llm(user_query)
+
+        # 4. Direct answer 처리
+        if plan_response.get("direct_answer"):
+            self.storage.complete_session(
+                final_response=plan_response["direct_answer"],
+                status="completed"
+            )
+            yield StepInfo(type=StepType.FINAL_ANSWER, step=0, content=plan_response["direct_answer"])
+            return
+
+        # 5. Plan 파싱
+        self._plan = self._parse_plan(plan_response.get("plan", []))
+
+        # 6. Plan 없음 처리
+        if not self._plan:
+            direct_response = plan_response.get("thought", "요청을 처리할 수 없습니다.")
+            self.storage.complete_session(final_response=direct_response, status="completed")
+            yield StepInfo(type=StepType.FINAL_ANSWER, step=0, content=direct_response)
+            return
+
+        # 7. Plan 준비 완료
+        plan_summary = self._format_plan_summary()
+        yield StepInfo(type=StepType.PLAN_READY, step=0, content=plan_summary)
+
+    def _call_plan_llm(self, user_query: str) -> Dict:
+        """LLM에 계획 수립 요청"""
         tools_schema = json.dumps(
             self.tools.get_all_schemas(),
             indent=2,
             ensure_ascii=False
         )
-        
+
         system_prompt = f"""You are a task planning expert. Analyze the user's request and create an execution plan.
 
 ## Available Tools
@@ -712,7 +745,7 @@ If no tools needed:
 Create an execution plan or provide direct answer. Respond with JSON only."""
 
         self.logger.debug("Planning 호출", {"query": user_query[:50]})
-        
+
         raw_response = self._call_llm_api(system_prompt, user_prompt)
 
         try:
