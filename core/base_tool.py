@@ -73,15 +73,6 @@ class ToolResult:
             metadata=metadata or {}
         )
 
-    def __str__(self) -> str:
-        """ToolResult 객체를 문자열로 표현하는 메서드"""
-        status_label = self.status.upper()
-        if self.success:
-            return f"{status_label}: Output: {str(self.output)}, Metadata: {str(self.metadata)}"
-        else:
-            return f"{status_label}: {str(self.error)}, Output: {str(self.output)}, Metadata: {str(self.metadata)}"
-
-
 
 @dataclass
 class ActionParam:

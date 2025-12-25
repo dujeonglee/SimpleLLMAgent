@@ -225,15 +225,7 @@ class Orchestrator:
         """실행 중지"""
         self._stopped = True
         self.logger.info("실행 중지 요청됨")
-    
-    def run(self, user_query: str) -> str:
-        """동기 실행"""
-        final_response = ""
-        for step_info in self.run_stream(user_query):
-            if step_info.type == StepType.FINAL_ANSWER:
-                final_response = step_info.content
-        return final_response
-    
+
     def run_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
         """Streaming 실행 - Plan & Execute 패턴"""
         self._stopped = False

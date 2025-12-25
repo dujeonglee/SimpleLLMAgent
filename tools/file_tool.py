@@ -287,38 +287,3 @@ class FileTool(BaseTool):
                 "is_dir": os.path.isdir(resolved) if exists else None
             }
         )
-    
-    def _list_dir(self, path: str, pattern: str) -> ToolResult:
-        """디렉토리 목록 조회"""
-        is_valid, resolved_or_error = self._validate_path(path)
-        if not is_valid:
-            return ToolResult.error_result(resolved_or_error)
-        
-        resolved = resolved_or_error
-        
-        if not os.path.exists(resolved):
-            return ToolResult.error_result(f"Directory not found: {path}")
-        
-        if not os.path.isdir(resolved):
-            return ToolResult.error_result(f"Not a directory: {path}")
-        
-        try:
-            import fnmatch
-            
-            all_files = os.listdir(resolved)
-            
-            if pattern and pattern != "*":
-                files = [f for f in all_files if fnmatch.fnmatch(f, pattern)]
-            else:
-                files = all_files
-            
-            return ToolResult.success_result(
-                output=sorted(files),
-                metadata={
-                    "path": resolved,
-                    "pattern": pattern,
-                    "total_count": len(files)
-                }
-            )
-        except Exception as e:
-            return ToolResult.error_result(f"List dir error: {str(e)}")
