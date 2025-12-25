@@ -224,16 +224,18 @@ class Orchestrator:
         self._stopped = True
         self.logger.info("실행 중지 요청됨")
 
-    def run_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
-        """Streaming 실행 - Plan & Execute 패턴"""
-        # 상태 초기화
+    def _initialize_session(self, user_query: str):
+        """세션 초기화"""
         self._stopped = False
         self._current_step = 0
         self._plan = []
         self._plan_completed = False
         self._session_id = self.storage.start_session(user_query)
-
         self.logger.info(f"실행 시작: {user_query[:50]}...")
+
+    def run_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
+        """Streaming 실행 - Plan & Execute 패턴"""
+        self._initialize_session(user_query)
 
         try:
             # Phase 1: Planning
