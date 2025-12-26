@@ -895,20 +895,7 @@ Create an execution plan. Respond with JSON only."""
 ## Using Previous Results
 
 You can reference previous step results using: [RESULT:result_id]
-
-Example for llm_tool.staticanalysis:
-{{
-  "action": "staticanalysis",
-  "staticanalysis_content": "[RESULT:result_001]",
-  "staticanalysis_instruction": "Find memory leaks"
-}}
-
-Example for file_tool.write:
-{{
-  "action": "write",
-  "write_path": "output.md",
-  "write_content": "[RESULT:result_002]"
-}}
+Use this syntax in any parameter value to insert the output from a previous step.
 
 ## Available Previous Step Results
 {available_results}
