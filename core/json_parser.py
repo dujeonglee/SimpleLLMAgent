@@ -264,9 +264,11 @@ if __name__ == "__main__":
         # 15. 유니코드
         ('{"korean": "한글 테스트", "emoji": "😀"}', "유니코드"),
 
-        # 16. Nested 코드 블록
-        ('```json\n{"key": "```json\ncodeA\n``` and ```json\ncodeB\n```"}\n```', "JSON 코드 블록"),
+        # 16. Nested JSON 코드 블록
+        ('```json\n{"key": "```json\ncodeA\n``` and ```json\ncodeB\n```"}\n```', "Nested JSON 코드 블록"),
 
+        # 17. Nested 코드 블록
+        ('```\n{"key": "```json\ncodeA\n``` and ```json\ncodeB\n```"}\n```', "Nested 코드 블록"),
     ]
     
     print("=" * 60)
