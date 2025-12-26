@@ -631,7 +631,22 @@ Provide a direct answer. Respond with JSON only."""
 2. Create a step-by-step plan using available tools
 3. If plan cannot be created, provide direct answer explaining why
 
-## IMPORTANT: Data Flow Between Steps
+## IMPORTANT: Plan Optimization
+**Minimize the number of steps - prefer direct parameter usage over intermediate steps.**
+
+Good (1 step):
+- llm_tool.staticanalysis with file_path="example.py"
+
+Bad (2 steps):
+- Step 1: file_tool.read to get content
+- Step 2: llm_tool.staticanalysis with content="[RESULT:result_001]"
+
+Guidelines:
+- Check tool schemas for direct parameter support (file_path, content, etc.)
+- Only add intermediate steps when transformation/filtering is actually needed
+- Combine operations in a single step whenever possible
+
+## Data Flow Between Steps
 - Each step's output becomes available for the next step with a unique result ID
 - Reference previous results using [RESULT:result_id] format in parameters
 - Example: Step 1 output → [RESULT:result_001], Step 2 output → [RESULT:result_002]
