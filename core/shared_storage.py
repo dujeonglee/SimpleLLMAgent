@@ -5,7 +5,7 @@ Multi-Agent Chatbot의 핵심 데이터 저장소.
 Agent/Tool 간 데이터 공유 및 실행 결과 관리를 담당.
 
 구조:
-- context: 현재 작업 컨텍스트 (user_query, current_step)
+- context: 현재 작업 컨텍스트 (user_query, session_id)
 - results: step별 실행 결과 리스트
 - history: 완료된 세션들의 히스토리
 """
@@ -31,7 +31,6 @@ from .debug_logger import DebugLogger
 class Context:
     """현재 작업 컨텍스트"""
     user_query: str
-    current_step: int = 0
     session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     
@@ -98,8 +97,7 @@ class SharedStorage:
     def start_session(self, user_query: str) -> str:
         """새 세션 시작"""
         self._context = Context(
-            user_query=user_query,
-            current_step=0
+            user_query=user_query
         )
         self._results = []
 
@@ -514,7 +512,6 @@ class SharedStorage:
         if self._context:
             print(f"  Session ID: {self._context.session_id}")
             print(f"  User Query: {self._context.user_query}")
-            print(f"  Current Step: {self._context.current_step}")
         else:
             print("  (활성 세션 없음)")
         

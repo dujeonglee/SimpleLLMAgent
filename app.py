@@ -582,7 +582,6 @@ def get_shared_storage_tree() -> str:
         if user_query and len(user_query) > 50:
             user_query = user_query[:50] + "..."
         html += f"<div>user_query: <code>{user_query}</code></div>"
-        html += f"<div>current_step: <code>{context.get('current_step', 0)}</code></div>"
         html += f"<div>session_id: <code>{context.get('session_id', 'N/A')}</code></div>"
     else:
         html += "<div style='color: gray;'>세션 없음</div>"

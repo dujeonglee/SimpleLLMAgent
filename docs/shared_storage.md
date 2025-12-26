@@ -34,7 +34,6 @@ SharedStorage
 ```python
 context = {
     "user_query": "wifi.log 파일 읽어서 분석해줘",
-    "current_step": 1,
     "session_id": "abc12345",
     "created_at": "2025-01-15T10:30:00"
 }
