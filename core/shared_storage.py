@@ -32,11 +32,10 @@ class Context:
     """현재 작업 컨텍스트"""
     user_query: str
     session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    
+
     def to_dict(self) -> Dict:
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict) -> "Context":
         return cls(**data)
@@ -241,14 +240,14 @@ class SharedStorage:
         """현재 세션 완료 및 히스토리에 저장"""
         if not self._context:
             raise RuntimeError("No active session")
-        
+
         session = SessionHistory(
             session_id=self._context.session_id,
             user_query=self._context.user_query,
             results=[r.to_dict() for r in self._results],
             final_response=final_response,
             status=status,
-            created_at=self._context.created_at
+            created_at=datetime.now().isoformat()
         )
         
         self._history.append(session)
@@ -304,8 +303,7 @@ class SharedStorage:
         if include_session_info:
             sections.append(
                 f"## Session Info\n"
-                f"- ID: {self._context.session_id}\n"
-                f"- Created: {self._context.created_at}"
+                f"- ID: {self._context.session_id}"
             )
 
         # 2. 사용자 요청 (항상 포함)
