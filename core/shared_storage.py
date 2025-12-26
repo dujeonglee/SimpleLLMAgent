@@ -5,7 +5,7 @@ Multi-Agent Chatbot의 핵심 데이터 저장소.
 Agent/Tool 간 데이터 공유 및 실행 결과 관리를 담당.
 
 구조:
-- context: 현재 작업 컨텍스트 (user_query, current_plan, current_step)
+- context: 현재 작업 컨텍스트 (user_query, current_step)
 - results: step별 실행 결과 리스트
 - history: 완료된 세션들의 히스토리
 """
@@ -31,7 +31,6 @@ from .debug_logger import DebugLogger
 class Context:
     """현재 작업 컨텍스트"""
     user_query: str
-    current_plan: List[str] = field(default_factory=list)
     current_step: int = 0
     session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -96,45 +95,19 @@ class SharedStorage:
     # =========================================================================
     # Context 관리
     # =========================================================================
-    def start_session(self, user_query: str, plan: List[str] = None) -> str:
+    def start_session(self, user_query: str) -> str:
         """새 세션 시작"""
         self._context = Context(
             user_query=user_query,
-            current_plan=plan or [],
             current_step=0
         )
         self._results = []
-        
+
         self.logger.info(f"새 세션 시작: {self._context.session_id}", {
-            "user_query": user_query,
-            "plan": plan
+            "user_query": user_query
         })
-        
+
         return self._context.session_id
-    
-    def update_plan(self, plan: List[str]):
-        """실행 계획 업데이트"""
-        if not self._context:
-            self.logger.error("활성 세션 없음 - start_session() 먼저 호출 필요")
-            raise RuntimeError("No active session")
-        
-        old_plan = self._context.current_plan
-        self._context.current_plan = plan
-        
-        self.logger.debug("실행 계획 업데이트", {
-            "old_plan": old_plan,
-            "new_plan": plan
-        })
-    
-    def advance_step(self) -> int:
-        """다음 step으로 이동"""
-        if not self._context:
-            raise RuntimeError("No active session")
-        
-        self._context.current_step += 1
-        self.logger.debug(f"Step 이동: {self._context.current_step - 1} → {self._context.current_step}")
-        
-        return self._context.current_step
     
     def get_context(self) -> Optional[Dict]:
         """현재 context 반환"""
@@ -340,20 +313,7 @@ class SharedStorage:
         # 2. 사용자 요청 (항상 포함)
         sections.append(f"## User Request\n{self._context.user_query}")
 
-        # 3. 실행 계획 (옵션)
-        if include_plan and self._context.current_plan:
-            plan_lines = []
-            for i, step in enumerate(self._context.current_plan):
-                if i < self._context.current_step:
-                    plan_lines.append(f"  ✓ {i+1}. {step}")
-                elif i == self._context.current_step:
-                    plan_lines.append(f"  → {i+1}. {step} (current)")
-                else:
-                    plan_lines.append(f"    {i+1}. {step}")
-
-            sections.append(f"## Execution Plan\n" + "\n".join(plan_lines))
-
-        # 4. 실행 결과
+        # 3. 실행 결과
         target_results = self._results if include_all_outputs else (self._results[-1:] if self._results else [])
 
         if target_results:
@@ -555,7 +515,6 @@ class SharedStorage:
             print(f"  Session ID: {self._context.session_id}")
             print(f"  User Query: {self._context.user_query}")
             print(f"  Current Step: {self._context.current_step}")
-            print(f"  Plan: {self._context.current_plan}")
         else:
             print("  (활성 세션 없음)")
         

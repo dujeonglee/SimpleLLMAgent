@@ -34,7 +34,6 @@ SharedStorage
 ```python
 context = {
     "user_query": "wifi.log 파일 읽어서 분석해줘",
-    "current_plan": ["파일 읽기", "분석하기", "결과 정리"],
     "current_step": 1,
     "session_id": "abc12345",
     "created_at": "2025-01-15T10:30:00"
@@ -119,9 +118,7 @@ User Query
 
 | 메서드 | 설명 |
 |--------|------|
-| `start_session(user_query, plan)` | 새 세션 시작, session_id 반환 |
-| `update_plan(plan)` | 실행 계획 업데이트 |
-| `advance_step()` | 다음 step으로 이동 |
+| `start_session(user_query)` | 새 세션 시작, session_id 반환 |
 | `complete_session(final_response)` | 세션 완료 → History로 이동 |
 
 ### 결과 관리
@@ -158,8 +155,7 @@ storage = SharedStorage(debug_enabled=True)
 
 # 2. 세션 시작
 session_id = storage.start_session(
-    user_query="wifi.log 분석해줘",
-    plan=["파일 읽기", "분석하기"]
+    user_query="wifi.log 분석해줘"
 )
 
 # 3. 결과 추가
@@ -170,7 +166,6 @@ storage.add_result(
     input_data={"path": "wifi.log"},
     output="[ERROR] DMA timeout..."
 )
-storage.advance_step()
 
 # 4. 이전 결과 사용
 previous = storage.get_last_output()  # → "[ERROR] DMA timeout..."
