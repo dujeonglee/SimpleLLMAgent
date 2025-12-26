@@ -459,7 +459,7 @@ Respond with JSON only."""
 
         try:
             raw_response = self._call_llm_api(system_prompt, user_prompt)
-            parsed = self._parse_llm_response(raw_response)
+            parsed = self._parse_tool_call_response(raw_response)
 
             if not parsed.tool_calls:
                 self.logger.info(f"LLM 판단: 파라미터 수정으로 해결 불가능", {
@@ -948,7 +948,7 @@ Description: {planned_step.description}
 Provide exact parameters for this step. Respond with JSON only."""
 
         raw_response = self._call_llm_api(system_prompt, user_prompt)
-        return self._parse_llm_response(raw_response)
+        return self._parse_tool_call_response(raw_response)
     
     # =========================================================================
     # Helper Methods
@@ -1243,8 +1243,8 @@ Based on the above results, provide a final answer to the user's query."""
             self.logger.error(f"LLM API 호출 실패: {str(e)}")
             raise
 
-    def _parse_llm_response(self, raw_response: str) -> LLMResponse:
-        """LLM 응답 파싱"""
+    def _parse_tool_call_response(self, raw_response: str) -> LLMResponse:
+        """LLM 응답에서 tool_calls를 추출하여 LLMResponse 객체로 변환"""
         try:
             data = parse_json_strict(raw_response)
 
