@@ -894,7 +894,18 @@ Create an execution plan. Respond with JSON only."""
 
 ## Using Previous Results
 
-You can reference previous step results using: [RESULT:result_id]
+**IMPORTANT: Prefer using [RESULT:result_id] references over regenerating content.**
+
+When a previous step's output can be used, reference it with [RESULT:result_id] instead of:
+- Reading the same file again
+- Regenerating the same content
+- Copying/pasting previous outputs
+
+Only generate new content when you need to:
+- Transform or filter previous results
+- Combine multiple results
+- Add new information not available in previous steps
+
 Use this syntax in any parameter value to insert the output from a previous step.
 
 ## Available Previous Step Results
