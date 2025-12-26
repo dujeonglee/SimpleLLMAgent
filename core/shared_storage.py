@@ -15,52 +15,9 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field, asdict
-from enum import Enum
 import uuid
 
-
-# =============================================================================
-# Debug Logger
-# =============================================================================
-class DebugLevel(Enum):
-    INFO = "INFO"
-    DEBUG = "DEBUG"
-    WARN = "WARN"
-    ERROR = "ERROR"
-
-
-class DebugLogger:
-    """콘솔 디버그 로거"""
-    
-    def __init__(self, module_name: str, enabled: bool = True):
-        self.module_name = module_name
-        self.enabled = enabled
-    
-    def _log(self, level: DebugLevel, message: str, data: Any = None):
-        if not self.enabled:
-            return
-        
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        prefix = f"[{timestamp}] [{level.value}] [{self.module_name}]"
-        
-        print(f"{prefix} {message}")
-        if data is not None:
-            if isinstance(data, (dict, list)):
-                print(f"{prefix} └─ Data: {json.dumps(data, ensure_ascii=False, indent=2, default=str)}")
-            else:
-                print(f"{prefix} └─ Data: {data}")
-    
-    def info(self, message: str, data: Any = None):
-        self._log(DebugLevel.INFO, message, data)
-    
-    def debug(self, message: str, data: Any = None):
-        self._log(DebugLevel.DEBUG, message, data)
-    
-    def warn(self, message: str, data: Any = None):
-        self._log(DebugLevel.WARN, message, data)
-    
-    def error(self, message: str, data: Any = None):
-        self._log(DebugLevel.ERROR, message, data)
+from .debug_logger import DebugLogger
 
 
 # =============================================================================

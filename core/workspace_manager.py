@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from .orchestrator import LLMConfig
-from .shared_storage import DebugLogger
+from .debug_logger import DebugLogger
 
 
 @dataclass

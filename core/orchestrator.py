@@ -16,7 +16,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Generator, List, Optional
 
-from core.shared_storage import SharedStorage, DebugLogger
+from core.shared_storage import SharedStorage
+from core.debug_logger import DebugLogger
 from core.base_tool import ToolRegistry, ToolResult, ActionSchema
 from core.json_parser import parse_json_strict
 

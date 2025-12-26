@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from .shared_storage import DebugLogger
+from .debug_logger import DebugLogger
 
 
 # =============================================================================
