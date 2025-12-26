@@ -40,6 +40,8 @@ workspace/
 logs/
 *.log
 *.txt
+.gradio/
+TODO
 
 # Test coverage
 .coverage
