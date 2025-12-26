@@ -34,7 +34,7 @@ class FileTool(BaseTool):
                 name="read",
                 description="Read the contents of a file from the workspace",
                 params=[
-                    ActionParam("read_path", "str", True, f"Path to the file to read (relative to {self.base_path})"),
+                    ActionParam("read_path", "str", True, "Path to the file to read"),
                     ActionParam("read_encoding", "str", False, "Character encoding of the file (e.g., utf-8, ascii, latin-1)", "utf-8")
                 ],
                 output_type="str",
@@ -44,7 +44,7 @@ class FileTool(BaseTool):
                 name="write",
                 description="Write content to a file (creates new file or overwrites existing file if overwrite=true)",
                 params=[
-                    ActionParam("write_path", "str", True, f"Path where the file will be saved (relative to {self.base_path})"),
+                    ActionParam("write_path", "str", True, "Path where the file will be saved"),
                     ActionParam("write_content", "str", True, "The text content to write to the file"),
                     ActionParam("write_overwrite", "bool", False, "Whether to overwrite the file if it already exists (default: false for safety)", False),
                     ActionParam("write_encoding", "str", False, "Character encoding to use when writing the file (e.g., utf-8, ascii)", "utf-8")
@@ -56,7 +56,7 @@ class FileTool(BaseTool):
                 name="append",
                 description="Append content to the end of an existing file without overwriting existing content",
                 params=[
-                    ActionParam("append_path", "str", True, f"Path to the file to append to (must exist)"),
+                    ActionParam("append_path", "str", True, "Path to the file to append to (must exist)"),
                     ActionParam("append_content", "str", True, "The text content to append at the end of the file"),
                     ActionParam("append_encoding", "str", False, "Character encoding to use when appending (e.g., utf-8, ascii)", "utf-8")
                 ],
@@ -67,7 +67,7 @@ class FileTool(BaseTool):
                 name="delete",
                 description="Permanently delete a file from the workspace",
                 params=[
-                    ActionParam("delete_path", "str", True, f"Path to the file to delete (relative to {self.base_path})")
+                    ActionParam("delete_path", "str", True, "Path to the file to delete")
                 ],
                 output_type="bool",
                 output_description="Success message confirming file deletion"
@@ -76,7 +76,7 @@ class FileTool(BaseTool):
                 name="exists",
                 description="Check whether a file or directory exists at the specified path",
                 params=[
-                    ActionParam("exists_path", "str", True, f"Path to check for existence (relative to {self.base_path})")
+                    ActionParam("exists_path", "str", True, "Path to check for existence")
                 ],
                 output_type="bool",
                 output_description="Message indicating whether the path exists and whether it's a file or directory"
