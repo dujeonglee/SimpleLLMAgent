@@ -41,7 +41,7 @@ logs/
 *.log
 *.txt
 .gradio/
-TODO
+TODO.md
 
 # Test coverage
 .coverage
