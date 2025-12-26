@@ -930,6 +930,29 @@ Use this syntax in any parameter value to insert the output from a previous step
 ## Response Format for Current Step
 {response_format}
 
+## IMPORTANT: Extract File References from Description
+**When the step description mentions file names, use them directly in the appropriate parameters.**
+
+Example 1:
+Description: "Modify sample.c based on the instructions in static.md"
+→ Use file_path="sample.c" for content parameter
+→ Use file_path="static.md" for instruction parameter
+
+Example 2:
+Description: "Analyze vulnerabilities in example.py"
+→ Use file_path="example.py" for content parameter
+
+Example 3:
+Description: "Read config.json and write summary to output.md"
+→ Use read_path="config.json"
+→ Use write_path="output.md"
+
+Guidelines:
+- Look for file extensions (.py, .c, .md, .txt, .json, etc.) in the description
+- Map file names to the most appropriate parameter (content, file_path, instruction, etc.)
+- Check the tool schema to see which parameters accept file_path
+- Only use [RESULT:xxx] when the file content is already available from a previous step
+
 ## Rules
 - Execute ONLY the current step (Step {planned_step.step})
 - You MUST generate exactly ONE tool_call for this step
@@ -944,6 +967,8 @@ Use this syntax in any parameter value to insert the output from a previous step
 ## Current Step to Execute
 Step {planned_step.step}: {planned_step.tool_name}.{planned_step.action}
 Description: {planned_step.description}
+
+IMPORTANT: Check the description for file names and map them to appropriate parameters.
 
 Provide exact parameters for this step. Respond with JSON only."""
 
