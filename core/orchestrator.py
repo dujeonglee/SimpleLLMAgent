@@ -171,7 +171,6 @@ class Orchestrator:
         self._stopped = False
         self._current_step = 0
         self._plan: List[PlannedStep] = []
-        self._session_id: Optional[str] = None
         self._needs_tools: bool = True  # 기본값: 툴 필요
         
         # LLMTool 연동
@@ -233,7 +232,7 @@ class Orchestrator:
         self._plan = []
         self._needs_tools = True
         self._files_context = files_context
-        self._session_id = self.storage.start_session(user_query)
+        self.storage.start_session(user_query)
         self.logger.info(f"실행 시작: {user_query[:50]}...")
 
     def run_stream(self, user_query: str, files_context: str = "") -> Generator[StepInfo, None, None]:
@@ -736,7 +735,7 @@ Create an execution plan. Respond with JSON only."""
         # Precondition: Plan이 존재해야 함
         if not self._plan:
             error_msg = "CRITICAL: _execute_plan called with empty plan"
-            self.logger.error(error_msg, {"session_id": self._session_id})
+            self.logger.error(error_msg)
             self.storage.complete_session(final_response=error_msg, status="error")
             yield StepInfo(type=StepType.ERROR, step=0, content=error_msg)
             return
