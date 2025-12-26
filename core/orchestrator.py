@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, Generator, List, Optional
 
 from core.shared_storage import SharedStorage, DebugLogger
 from core.base_tool import ToolRegistry, ToolResult, ActionSchema
+from core.json_parser import parse_json_strict
 
 
 # =============================================================================
@@ -586,7 +587,7 @@ Does this query require tool usage? Respond with JSON only."""
         raw_response = self._call_llm_api(system_prompt, user_prompt)
 
         try:
-            parsed = self._extract_json(raw_response)
+            parsed = parse_json_strict(raw_response)
             needs_tools = parsed.get("needs_tools", True)  # 기본값: True (안전)
             self.logger.debug("Classification 결과", {
                 "needs_tools": needs_tools,
@@ -714,7 +715,7 @@ Create an execution plan. Respond with JSON only."""
         raw_response = self._call_llm_api(system_prompt, user_prompt)
 
         try:
-            parsed = self._extract_json(raw_response)
+            parsed = parse_json_strict(raw_response)
             self.logger.debug("Plan 생성 완료", {
                 "has_plan": "plan" in parsed,
                 "has_direct_answer": "direct_answer" in parsed,
@@ -1241,110 +1242,11 @@ Based on the above results, provide a final answer to the user's query."""
         except Exception as e:
             self.logger.error(f"LLM API 호출 실패: {str(e)}")
             raise
-    
-    def _extract_json(self, text: str) -> Dict:
-        """텍스트에서 JSON 추출"""
-        json_match = re.search(r'```json\s*([\s\S]*?)\s*```', text)
-        if json_match:
-            return json.loads(json_match.group(1))
-        
-        json_match = re.search(r'\{[\s\S]*\}', text)
-        if json_match:
-            return json.loads(json_match.group(0))
-        
-        raise ValueError("JSON not found in response")
-    
-    def _extract_json_str(self, text: str) -> Optional[str]:
-        """괄호 매칭으로 JSON 추출"""
-        start = text.find('{')
-        if start == -1:
-            return None
-        
-        depth = 0
-        in_string = False
-        escape = False
-        
-        for i, char in enumerate(text[start:], start):
-            if escape:
-                escape = False
-                continue
-            if char == '\\':
-                escape = True
-                continue
-            if char == '"' and not escape:
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if char == '{':
-                depth += 1
-            elif char == '}':
-                depth -= 1
-                if depth == 0:
-                    return text[start:i+1]
-        
-        return None
-    
-    def _fix_triple_quotes(self, text: str) -> str:
-        """삼중 따옴표 처리"""
-        def replace_triple_quotes(match):
-            content = match.group(1)
-            content = content.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-            content = content.replace('"', '\\"')
-            return f'"{content}"'
-        
-        text = re.sub(r'"""(.*?)"""', replace_triple_quotes, text, flags=re.DOTALL)
-        text = re.sub(r"'''(.*?)'''", replace_triple_quotes, text, flags=re.DOTALL)
-        return text
-    
-    def _sanitize_json_string(self, text: str) -> str:
-        """JSON 문자열 정리"""
-        text = self._fix_triple_quotes(text)
-        
-        result = []
-        in_string = False
-        escape = False
-        
-        for char in text:
-            if escape:
-                result.append(char)
-                escape = False
-                continue
-            if char == '\\':
-                result.append(char)
-                escape = True
-                continue
-            if char == '"':
-                in_string = not in_string
-                result.append(char)
-                continue
-            
-            if in_string:
-                if char == '\n':
-                    result.append('\\n')
-                elif char == '\r':
-                    result.append('\\r')
-                elif char == '\t':
-                    result.append('\\t')
-                elif ord(char) < 32:
-                    result.append(f'\\u{ord(char):04x}')
-                else:
-                    result.append(char)
-            else:
-                result.append(char)
-        
-        return ''.join(result)
-    
+
     def _parse_llm_response(self, raw_response: str) -> LLMResponse:
         """LLM 응답 파싱"""
         try:
-            sanitized = self._sanitize_json_string(raw_response)
-            json_str = self._extract_json_str(sanitized)
-
-            if not json_str:
-                return LLMResponse(content=raw_response, raw_response=raw_response)
-
-            data = json.loads(json_str)
+            data = parse_json_strict(raw_response)
 
             tool_calls = None
             if data.get("tool_calls"):
@@ -1371,7 +1273,7 @@ Based on the above results, provide a final answer to the user's query."""
                 raw_response=raw_response
             )
 
-        except json.JSONDecodeError as e:
+        except (ValueError, json.JSONDecodeError) as e:
             self.logger.warn(f"JSON 파싱 실패: {str(e)}")
             return LLMResponse(content=raw_response, raw_response=raw_response)
     
