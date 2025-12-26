@@ -607,22 +607,8 @@ def get_shared_storage_tree() -> str:
             html += "</div></details>"
     
     html += "</div></details>"
-    
-    history = storage.get_history()
-    html += f"<details><summary><b>📁 History ({len(history)})</b></summary>"
-    html += "<div style='margin-left: 20px;'>"
-    
-    if not history:
-        html += "<div style='color: gray;'>히스토리 없음</div>"
-    else:
-        for i, h in enumerate(history[-5:]):
-            query = h.get("user_query", "")[:30]
-            status = "✅" if h.get("status") == "completed" else "⚠️"
-            html += f"<div>{status} {query}...</div>"
-    
-    html += "</div></details>"
     html += "</div>"
-    
+
     return html
 
 
@@ -630,35 +616,6 @@ def refresh_shared_storage() -> str:
     return get_shared_storage_tree()
 
 
-# =============================================================================
-# History Functions
-# =============================================================================
-
-def get_history_html() -> str:
-    state = get_app_state()
-    history_data = state.storage.get_history()
-    
-    if not history_data:
-        return "<p style='color: gray;'>히스토리가 없습니다.</p>"
-    
-    html = ""
-    for i, session in enumerate(reversed(history_data[-10:])):
-        query = session.get("user_query", "")[:50]
-        if len(session.get("user_query", "")) > 50:
-            query += "..."
-        
-        status_icon = "✅" if session.get("status") == "completed" else "⚠️"
-        time_str = session.get("created_at", "")[:16]
-        
-        html += f"""
-        <div style='padding:8px; margin:4px 0; background:#f5f5f5; border-radius:4px;'>
-            <span>{status_icon}</span>
-            <strong>{query}</strong>
-            <span style='color:gray; font-size:0.8em;'>{time_str}</span>
-        </div>
-        """
-    
-    return html
 
 
 # =============================================================================
@@ -775,11 +732,6 @@ def create_ui() -> gr.Blocks:
             with gr.TabItem("💾 SharedStorage"):
                 storage_tree = gr.HTML(get_shared_storage_tree())
                 refresh_storage_btn = gr.Button("🔄 새로고침", size="sm")
-            
-            # History Tab
-            with gr.TabItem("📜 History"):
-                history_html = gr.HTML(get_history_html())
-                refresh_history_btn = gr.Button("🔄 새로고침", size="sm")
         
         # =================================================================
         # Event Handlers
@@ -820,7 +772,7 @@ def create_ui() -> gr.Blocks:
                 yield chatbot_update, send_update, stop_update, ""
 
         def on_chat_complete():
-            return get_history_html(), get_shared_storage_tree(), gr.update(interactive=True), gr.update(interactive=False)
+            return get_shared_storage_tree(), gr.update(interactive=True), gr.update(interactive=False)
         
         msg_input.submit(
             fn=chat_stream_with_clear,
@@ -828,7 +780,7 @@ def create_ui() -> gr.Blocks:
             outputs=[chatbot, send_btn, stop_btn, msg_input]
         ).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree, send_btn, stop_btn]
+            outputs=[storage_tree, send_btn, stop_btn]
         )
         
         send_btn.click(
@@ -837,14 +789,14 @@ def create_ui() -> gr.Blocks:
             outputs=[chatbot, send_btn, stop_btn, msg_input]
         ).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree, send_btn, stop_btn]
+            outputs=[storage_tree, send_btn, stop_btn]
         )
         
         stop_btn.click(fn=stop_generation)
         
         clear_btn.click(fn=clear_chat, outputs=[chatbot]).then(
             fn=on_chat_complete,
-            outputs=[history_html, storage_tree, send_btn, stop_btn]
+            outputs=[storage_tree, send_btn, stop_btn]
         )
         
         # File management
@@ -869,21 +821,19 @@ def create_ui() -> gr.Blocks:
         )
         
         refresh_files_btn.click(fn=refresh_file_list, outputs=[file_list_html, file_select])
-        
-        # SharedStorage & History
+
+        # SharedStorage
         refresh_storage_btn.click(fn=refresh_shared_storage, outputs=[storage_tree])
-        refresh_history_btn.click(fn=get_history_html, outputs=[history_html])
         
         # Page Load
         def on_page_load():
             return (
                 get_file_list_html(),
                 gr.update(choices=get_file_choices()),
-                get_shared_storage_tree(),
-                get_history_html()
+                get_shared_storage_tree()
             )
-        
-        app.load(fn=on_page_load, outputs=[file_list_html, file_select, storage_tree, history_html])
+
+        app.load(fn=on_page_load, outputs=[file_list_html, file_select, storage_tree])
 
     return app
 
