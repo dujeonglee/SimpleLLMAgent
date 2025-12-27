@@ -122,11 +122,11 @@ class SharedStorage:
         """composite_key에서 session_id 추출 (session_id_result_id 형식)"""
         return composite_key.split('_', 1)[0]
 
-    def get_context(self) -> Optional[Dict]:
+    def get_current_context(self) -> Optional[Context]:
         """현재 활성 context 반환 (가장 최근 세션)"""
         if not self._contexts:
             return None
-        return self._contexts[-1].to_dict()
+        return self._contexts[-1]
     
     # =========================================================================
     # Results 관리
@@ -152,7 +152,8 @@ class SharedStorage:
             raise RuntimeError("Step info is missing from ToolResult")
 
         # 현재 활성 세션 ID 가져오기
-        current_session_id = self._contexts[-1].session_id
+        current_context = self.get_current_context()
+        current_session_id = current_context.session_id
 
         # 영구 저장소에 추가 (session_id_result_id를 키로 사용)
         composite_key = f"{current_session_id}_{tool_result.result_id}"
@@ -173,9 +174,10 @@ class SharedStorage:
     
     def get_results(self) -> List[Dict]:
         """현재 활성 세션의 모든 실행 결과 반환"""
-        if not self._contexts:
+        current_context = self.get_current_context()
+        if not current_context:
             return []
-        current_session_id = self._contexts[-1].session_id
+        current_session_id = current_context.session_id
         current_session_results = [
             r for composite_key, r in self._all_results.items()
             if self._get_session_id_from_key(composite_key) == current_session_id
@@ -268,10 +270,11 @@ class SharedStorage:
     # =========================================================================
     def complete_session(self, final_response: str, status: str = "completed"):
         """현재 활성 세션 완료"""
-        if not self._contexts:
+        current_context = self.get_current_context()
+        if not current_context:
             raise RuntimeError("No active session")
 
-        current_session_id = self._contexts[-1].session_id
+        current_session_id = current_context.session_id
 
         # 현재 세션의 결과 개수 계산
         current_session_results = [

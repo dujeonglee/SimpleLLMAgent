@@ -573,16 +573,16 @@ def get_shared_storage_tree() -> str:
     
     html = "<div style='font-family: monospace; font-size: 13px;'>"
     
-    context = storage.get_context()
+    current_context = storage.get_current_context()
     html += "<details open><summary><b>📁 Context</b></summary>"
     html += "<div style='margin-left: 20px;'>"
-    
-    if context:
-        user_query = context.get('user_query', 'N/A')
+
+    if current_context:
+        user_query = current_context.user_query
         if user_query and len(user_query) > 50:
             user_query = user_query[:50] + "..."
         html += f"<div>user_query: <code>{user_query}</code></div>"
-        html += f"<div>session_id: <code>{context.get('session_id', 'N/A')}</code></div>"
+        html += f"<div>session_id: <code>{current_context.session_id}</code></div>"
     else:
         html += "<div style='color: gray;'>세션 없음</div>"
     
