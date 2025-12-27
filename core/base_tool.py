@@ -37,7 +37,6 @@ class ToolResult:
     error: Optional[str] = None      # 에러 메시지 (실패 시)
     metadata: Dict = field(default_factory=dict)  # 부가 정보
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    result_id: str = field(default_factory=lambda: str(__import__('uuid').uuid4())[:8])  # 유니크 결과 ID
     session_id: str = ""             # 소속 세션 ID
 
     def to_dict(self) -> Dict:

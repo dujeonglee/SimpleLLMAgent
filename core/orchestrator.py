@@ -462,7 +462,7 @@ If error CANNOT be fixed by changing parameters:
 - Analyze the error carefully before deciding
 - Common fixable errors: wrong path format, missing required params, invalid parameter values
 - Common unfixable errors: file not found, permission denied, network unreachable
-- Use [RESULT:result_id] to reference previous results if helpful"""
+- Use [RESULT:session_id_step] to reference previous results if helpful (e.g., [RESULT:Session0_1])"""
 
         user_prompt = f"""## Retry Attempt {retry_count}
 
@@ -502,7 +502,7 @@ Respond with JSON only."""
         """Tool 실행 - REF 자동 치환
 
         지원하는 참조 형식:
-        - [RESULT:result_id]: 특정 result_id의 output으로 치환
+        - [RESULT:session_id_step]: 특정 session_id_step의 output으로 치환 (예: [RESULT:Session0_1])
 
         Note: 이 메서드는 재시도 로직이 없는 단순 실행만 수행.
               재시도가 필요한 경우 _execute_tool_with_retry() 사용.
@@ -662,7 +662,7 @@ Good (1 step):
 
 Bad (2 steps):
 - Step 1: file_tool.read to get content
-- Step 2: llm_tool.staticanalysis with content="[RESULT:result_001]"
+- Step 2: llm_tool.staticanalysis with content="[RESULT:Session0_1]"
 
 Guidelines:
 - Check tool schemas for direct parameter support (file_path, content, etc.)
@@ -670,9 +670,9 @@ Guidelines:
 - Combine operations in a single step whenever possible
 
 ## Data Flow Between Steps
-- Each step's output becomes available for the next step with a unique result ID
-- Reference previous results using [RESULT:result_id] format in parameters
-- Example: Step 1 output → [RESULT:result_001], Step 2 output → [RESULT:result_002]
+- Each step's output becomes available for the next step with a unique result key (session_id_step format)
+- Reference previous results using [RESULT:session_id_step] format in parameters
+- Example: Session0 Step 1 output → [RESULT:Session0_1], Step 2 output → [RESULT:Session0_2]
 
 ## Response Format (JSON only)
 
@@ -695,7 +695,7 @@ If tools are needed:
             "action": "analyze",
             "description": "Analyze the file content",
             "params_hint": {{
-                "content": "[RESULT:result_001]",
+                "content": "[RESULT:Session0_1]",
                 "prompt": "Analyze this configuration"
             }}
         }},
@@ -706,7 +706,7 @@ If tools are needed:
             "description": "Save analysis result to file",
             "params_hint": {{
                 "write_path": "analysis.txt",
-                "write_content": "[RESULT:result_002]"
+                "write_content": "[RESULT:Session0_2]"
             }}
         }}
     ]
@@ -716,12 +716,12 @@ If tools are needed:
 For each step in the plan, include a "params_hint" field with suggested parameters:
 - Use exact parameter names with action prefix (e.g., read_path, write_content, analyze_prompt)
 - Provide concrete values when known from the user query (e.g., file names, prompts)
-- Use [RESULT:result_XXX] placeholders for outputs from previous steps
+- Use [RESULT:SessionX_Y] placeholders for outputs from previous steps (SessionX is current session, Y is step number)
 - Use descriptive placeholders for unknown content (e.g., "<user feedback>", "<analysis result>")
 
 Example params_hint patterns:
-- File operations: {{"read_path": "example.py"}}, {{"write_path": "output.txt", "write_content": "[RESULT:result_001]"}}
-- LLM operations: {{"content": "[RESULT:result_001]", "prompt": "Analyze vulnerabilities"}}
+- File operations: {{"read_path": "example.py"}}, {{"write_path": "output.txt", "write_content": "[RESULT:Session0_1]"}}
+- LLM operations: {{"content": "[RESULT:Session0_1]", "prompt": "Analyze vulnerabilities"}}
 - Mixed: {{"file_path": "test.c", "instruction": "Modify based on static.md"}}
 
 If no tools needed:
@@ -954,9 +954,9 @@ Create an execution plan. Respond with JSON only."""
 
 ## Using Previous Results
 
-**IMPORTANT: Prefer using [RESULT:result_id] references over regenerating content.**
+**IMPORTANT: Prefer using [RESULT:session_id_step] references over regenerating content.**
 
-When a previous step's output can be used, reference it with [RESULT:result_id] instead of:
+When a previous step's output can be used, reference it with [RESULT:session_id_step] instead of:
 - Reading the same file again
 - Regenerating the same content
 - Copying/pasting previous outputs
@@ -967,6 +967,7 @@ Only generate new content when you need to:
 - Add new information not available in previous steps
 
 Use this syntax in any parameter value to insert the output from a previous step.
+Example: [RESULT:Session0_1] references the output of Step 1 in Session0.
 
 ## Response Format for Current Step
 {response_format}
@@ -992,13 +993,13 @@ Guidelines:
 - Look for file extensions (.py, .c, .md, .txt, .json, etc.) in the description
 - Map file names to the most appropriate parameter (content, file_path, instruction, etc.)
 - Check the action schema above to see which parameters accept file_path
-- Only use [RESULT:xxx] when the file content is already available from a previous step
+- Only use [RESULT:session_id_step] when the file content is already available from a previous step
 
 ## Rules
 - Execute ONLY the current step (Step {planned_step.step})
 - You MUST generate exactly ONE tool_call for this step
 - Use parameter names with action prefix (e.g., read_path, write_content)
-- Reference previous results using [RESULT:result_id] format when appropriate
+- Reference previous results using [RESULT:session_id_step] format when appropriate (e.g., [RESULT:Session0_1])
 - All required parameters must be provided
 - Respond with valid JSON only"""
 
@@ -1086,7 +1087,7 @@ Provide exact parameters for this step. Respond with JSON only."""
             if "path" in param_name.lower() or "file" in param_name.lower():
                 example_value = '"example.txt"'
             elif "content" in param_name.lower():
-                example_value = '"[RESULT:result_xxx]" or "actual content"'
+                example_value = '"[RESULT:Session0_1]" or "actual content"'
             elif param.param_type == "int":
                 example_value = "100"
             elif param.param_type == "bool":
@@ -1127,18 +1128,18 @@ Provide exact parameters for this step. Respond with JSON only."""
             if not isinstance(value, str):
                 return value
 
-            # [RESULT:result_id] 패턴 찾기
+            # [RESULT:session_id_step] 패턴 찾기 (예: [RESULT:Session0_1])
             pattern = r'\[RESULT:([^\]]+)\]'
             matches = re.findall(pattern, value)
 
-            for result_id in matches:
-                output = self.storage.get_output_by_id(result_id)
+            for result_key in matches:
+                output = self.storage.get_output_by_key(result_key)
                 if output is not None:
                     # 전체 문자열이 REF만 있으면 output을 직접 사용, 아니면 문자열 치환
-                    if value.strip() == f"[RESULT:{result_id}]":
+                    if value.strip() == f"[RESULT:{result_key}]":
                         return output
                     else:
-                        value = value.replace(f"[RESULT:{result_id}]", str(output))
+                        value = value.replace(f"[RESULT:{result_key}]", str(output))
 
             return value
 

@@ -131,7 +131,7 @@ class SharedStorage:
         })
 
     def _get_session_id_from_key(self, composite_key: str) -> str:
-        """composite_key에서 session_id 추출 (session_id_result_id 형식)"""
+        """composite_key에서 session_id 추출 (session_id_step 형식, 예: Session0_1 → Session0)"""
         return composite_key.split('_', 1)[0]
 
     def get_current_context(self) -> Optional[Context]:
@@ -163,19 +163,15 @@ class SharedStorage:
             self.logger.error("Step 정보가 기록되지 않음")
             raise RuntimeError("Step info is missing from ToolResult")
 
-        # 현재 활성 세션 ID 가져오기
-        current_context = self.get_current_context()
-        current_session_id = current_context.session_id
-
-        # 영구 저장소에 추가 (session_id_result_id를 키로 사용)
-        composite_key = f"{current_session_id}_{tool_result.result_id}"
+        # 영구 저장소에 추가 (session_id_step을 키로 사용)
+        composite_key = f"{tool_result.session_id}_{tool_result.step}"
         self._all_results[composite_key] = tool_result
 
         # 로그 출력 (output은 truncate)
         output_preview = self._truncate_output(str(tool_result.output))
         self.logger.info(f"결과 추가: Step {tool_result.step} - {tool_result.executor}.{tool_result.action}", {
-            "result_id": tool_result.result_id,
-            "session_id": current_session_id,
+            "session_id": tool_result.session_id,
+            "step": tool_result.step,
             "composite_key": composite_key,
             "status": tool_result.status,
             "output_preview": output_preview,
@@ -198,32 +194,32 @@ class SharedStorage:
         current_session_results.sort(key=lambda r: r.step)
         return [r.to_dict() for r in current_session_results]
 
-    def get_result_by_id(self, result_id: str) -> Optional[Dict]:
+    def get_result_by_key(self, key: str) -> Optional[Dict]:
         """
-        result_id로 결과 조회
+        복합 키로 결과 조회
 
         Args:
-            result_id: 결과 ID (session_id_result_id 형식)
+            key: 결과 키 (session_id_step 형식, 예: "Session0_1")
 
         Returns:
             Dict: 결과 dict 또는 None
         """
-        result = self._all_results.get(result_id)
+        result = self._all_results.get(key)
         if result:
             return result.to_dict()
         return None
 
-    def get_output_by_id(self, result_id: str) -> Any:
+    def get_output_by_key(self, key: str) -> Any:
         """
-        result_id로 output만 조회
+        복합 키로 output만 조회
 
         Args:
-            result_id: 결과 ID (session_id_result_id 형식)
+            key: 결과 키 (session_id_step 형식, 예: "Session0_1")
 
         Returns:
             Any: output 또는 None
         """
-        result = self._all_results.get(result_id)
+        result = self._all_results.get(key)
         if result:
             return result.output
         return None
