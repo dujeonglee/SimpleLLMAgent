@@ -304,7 +304,10 @@ def load_settings_for_modal():
         config.temperature,
         config.max_tokens,
         config.top_p,
+        config.top_k,
         config.repeat_penalty,
+        config.frequency_penalty,
+        config.presence_penalty,
         config.num_ctx,
         config.max_steps,
         config.timeout
@@ -339,23 +342,27 @@ def on_url_change(url: str):
         )
 
 
-def save_settings(url, model_display, temperature, max_tokens, top_p, repeat_penalty, num_ctx, max_steps, timeout):
+def save_settings(url, model_display, temperature, max_tokens, top_p, top_k, repeat_penalty,
+                  frequency_penalty, presence_penalty, num_ctx, max_steps, timeout):
     state = get_app_state()
-    
+
     model_name = model_display.split(" (")[0] if " (" in model_display else model_display
-    
+
     state.update_llm_config(
         base_url=url,
         model=model_name,
         temperature=temperature,
         max_tokens=max_tokens,
         top_p=top_p,
+        top_k=top_k,
         repeat_penalty=repeat_penalty,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
         num_ctx=num_ctx,
         max_steps=max_steps,
         timeout=timeout
     )
-    
+
     return gr.update(visible=False)
 
 
@@ -490,11 +497,19 @@ def create_ui() -> gr.Blocks:
             with gr.Row():
                 top_p_slider = gr.Slider(0.0, 1.0, 0.05, value=state.llm_config.top_p, label="Top-p",
                                          info="LLM이 다음 단어를 선택할 때 고려하는 확률 분포의 누적 확률을 조절합니다. 높은 값일수록 다양한 단어를 선택하고 일관성이 감소 합니다.")
+                top_k_slider = gr.Slider(1, 100, 1, value=state.llm_config.top_k, label="Top-k",
+                                         info="다음 토큰 선택 시 고려할 상위 후보 개수입니다. 낮은 값은 더 일관성 있지만 덜 다양한 응답을 생성합니다.")
                 repeat_penalty_slider = gr.Slider(1.0, 2.0, 0.1, value=state.llm_config.repeat_penalty, label="Repeat Penalty",
                                                   info="LLM이 이미 생성한 단어를 반복하는 것을 방지합니다. 값이 높을 수록 더 다양한 응답을 생성하고 값이 낮을 수록 더 자연스러운 응답을 생성합니다.")
+
+            with gr.Row():
+                frequency_penalty_slider = gr.Slider(0.0, 2.0, 0.1, value=state.llm_config.frequency_penalty, label="Frequency Penalty",
+                                                     info="토큰의 빈도에 따라 페널티를 적용합니다. 높은 값은 자주 사용된 토큰의 재사용을 줄입니다.")
+                presence_penalty_slider = gr.Slider(0.0, 2.0, 0.1, value=state.llm_config.presence_penalty, label="Presence Penalty",
+                                                    info="이미 등장한 토큰에 페널티를 적용합니다. 높은 값은 새로운 주제로의 전환을 촉진합니다.")
                 max_steps_slider = gr.Slider(10, 100, 50, value=state.llm_config.max_steps, label="Max Steps",
                                              info="하나의 요청에 대해서 최대 Step(도구 호출 횟수)을 제한 합니다. 값이 높을 수록 더 많은 도구들을 호출을 할 수 있지만, 그만큼 더 많은 시간이 소요 됩니다.")
-            
+
             with gr.Row():
                 save_btn = gr.Button("💾 Save", variant="primary")
                 cancel_btn = gr.Button("Cancel")
@@ -551,18 +566,21 @@ def create_ui() -> gr.Blocks:
         settings_btn.click(
             fn=load_settings_for_modal,
             outputs=[settings_modal, url_input, url_status, model_dropdown,
-                    temperature_slider, max_tokens_slider, top_p_slider,
-                    repeat_penalty_slider, num_ctx_slider, max_steps_slider, timeout_slider]
+                    temperature_slider, max_tokens_slider, top_p_slider, top_k_slider,
+                    repeat_penalty_slider, frequency_penalty_slider, presence_penalty_slider,
+                    num_ctx_slider, max_steps_slider, timeout_slider]
         )
 
         cancel_btn.click(fn=close_settings_modal, outputs=[settings_modal])
-        
+
         url_input.change(fn=on_url_change, inputs=[url_input], outputs=[url_status, model_dropdown])
-        
+
         save_btn.click(
             fn=save_settings,
             inputs=[url_input, model_dropdown, temperature_slider, max_tokens_slider,
-                   top_p_slider, repeat_penalty_slider, num_ctx_slider, max_steps_slider, timeout_slider],
+                   top_p_slider, top_k_slider, repeat_penalty_slider,
+                   frequency_penalty_slider, presence_penalty_slider,
+                   num_ctx_slider, max_steps_slider, timeout_slider],
             outputs=[settings_modal]
         )
         

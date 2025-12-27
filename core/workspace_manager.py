@@ -71,7 +71,10 @@ class ConfigManager:
             max_tokens=2048,
             num_ctx=4096,
             top_p=0.9,
+            top_k=40,
             repeat_penalty=1.1,
+            frequency_penalty=0.0,
+            presence_penalty=0.0,
             max_steps=10
         )
         self.save_llm_config(config)

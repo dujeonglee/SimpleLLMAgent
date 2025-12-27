@@ -47,12 +47,15 @@ class LLMConfig:
     max_tokens: int = 2048
     num_ctx: int = 4096
     top_p: float = 0.9
+    top_k: int = 40
     repeat_penalty: float = 1.1
+    frequency_penalty: float = 0.0
+    presence_penalty: float = 0.0
     max_steps: int = 10
-    
+
     def to_dict(self) -> Dict:
         return asdict(self)
-    
+
     def update(self, **kwargs):
         for key, value in kwargs.items():
             if hasattr(self, key):
@@ -1291,8 +1294,11 @@ Based on the above results, provide a final answer to the user's query."""
                 "options": {
                     "temperature": self.llm_config.temperature,
                     "top_p": self.llm_config.top_p,
+                    "top_k": self.llm_config.top_k,
                     "num_predict": self.llm_config.max_tokens,
                     "repeat_penalty": self.llm_config.repeat_penalty,
+                    "frequency_penalty": self.llm_config.frequency_penalty,
+                    "presence_penalty": self.llm_config.presence_penalty,
                     "num_ctx": self.llm_config.num_ctx
                 }
             }
