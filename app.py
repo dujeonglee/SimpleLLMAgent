@@ -489,7 +489,7 @@ def create_ui() -> gr.Blocks:
             with gr.Row():
                 temperature_slider = gr.Slider(0.0, 2.0, 0.1, value=state.llm_config.temperature, label="Temperature",
                                                info="LLM의 응답의 무작위성을 조절합니다. 높은 값일수록 답변의 창의적성이 증가 하고 일관성이 감소 합니다.")
-                max_tokens_slider = gr.Slider(256, 4096, 256, value=state.llm_config.max_tokens, label="Max Tokens",
+                max_tokens_slider = gr.Slider(256, 24576, 256, value=state.llm_config.max_tokens, label="Max Tokens",
                                               info="LLM이 생성할 최대 토큰(단어 또는 단어 조각) 수를 지정합니다. 값이 너무 작으면 응답이 잘릴 수 있고, 값이 너무 크면 불필요하게 긴 응답이 생성될 수 있습니다.")
                 num_ctx_slider = gr.Slider(2048, 32768, 1024, value=state.llm_config.num_ctx, label="Context Window",
                                            info="LLM이 한 번에 처리할 수 있는 최대 컨텍스트 길이(토큰 수)를 지정합니다. 값이 너무 작으면 LLM이 중요한 정보를 놓칠 수 있고, 값이 너무 크면 성능이 저하될 수 있습니다.")
