@@ -198,9 +198,8 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             # StepPromptEvent는 빈 문자열을 반환 (ToolResultEvent에 포함되므로)
             # 따라서 빈 문자열이 아닐 때만 추가
             if display_text:
-                if accumulated_output and "💭" in accumulated_output[-1][:2]:
-                    accumulated_output.pop()
-                elif accumulated_output and "⏳" in accumulated_output[-1][:2]:
+                temporal_event_str = '''<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span style="font-style: italic;">'''
+                if accumulated_output and temporal_event_str in accumulated_output[-1]:
                     accumulated_output.pop()
 
                 accumulated_output.append(display_text)
@@ -720,8 +719,20 @@ def main():
             .chatbot .message {
                 transition: all 0.2s ease;
             }
+            .spinner {
+                width: 14px;
+                height: 14px;
+                border: 2px solid #f3f3f3;
+                border-top: 2px solid #3498db;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
             """
-    )
+            )
 
 
 if __name__ == "__main__":

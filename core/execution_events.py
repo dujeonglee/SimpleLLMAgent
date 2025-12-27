@@ -123,7 +123,10 @@ class ThinkingEvent(ExecutionEvent):
     message: str
 
     def to_display(self) -> str:
-        return f"💭 *{self.message}*"
+        return f'''
+<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span style="font-style: italic;">
+\n{self.message}
+</span></div>'''
 
     def to_dict(self) -> Dict:
         d = super().to_dict()
@@ -176,7 +179,10 @@ class ToolCallEvent(ExecutionEvent):
     arguments: Dict
 
     def to_display(self) -> str:
-        output = "⏳ *실행 중...*\n"
+        output = f'''
+<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span style="font-style: italic;">
+\n{self.tool_name}.{self.action} 실행 중 입니다.
+</span></div>'''
         return output
 
     def to_dict(self) -> Dict:
