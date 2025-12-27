@@ -156,26 +156,54 @@ def format_tool_result(content: str, tool_name: str, action: str, max_length: in
 
 
 def build_streaming_response(
-    plan_content: str,
-    step_outputs: List[Dict],
+    plan_prompts: Dict = None,
+    plan_content: str = "",
+    step_outputs: List[Dict] = None,
     current_thinking: str = "",
     final_answer: str = ""
 ) -> str:
     """
     실시간 스트리밍 응답 구성
-    
+
     Args:
+        plan_prompts: 계획 생성 프롬프트 정보 (system_prompt, user_prompt, raw_response)
         plan_content: 실행 계획
         step_outputs: 완료된 step들의 결과
         current_thinking: 현재 진행 중인 생각/상태
         final_answer: 최종 답변 (있을 경우)
     """
+    if step_outputs is None:
+        step_outputs = []
+
     parts = []
-    
+
+    # 0. Plan generation prompts (접이식 - 📋 실행 계획 앞에 위치)
+    if plan_prompts:
+        system_prompt = plan_prompts.get("system_prompt", "")
+        user_prompt = plan_prompts.get("user_prompt", "")
+        raw_response = plan_prompts.get("raw_response", "")
+
+        prompts_section = "<details>\n<summary>🔍 Plan Generation Details</summary>\n\n"
+
+        # System Prompt
+        prompts_section += "<details>\n<summary><b>System Prompt</b></summary>\n\n"
+        prompts_section += f"```\n{system_prompt}\n```\n</details>\n\n"
+
+        # User Prompt
+        prompts_section += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
+        prompts_section += f"```\n{user_prompt}\n```\n</details>\n\n"
+
+        # LLM Response
+        prompts_section += "<details>\n<summary><b>LLM Response</b></summary>\n\n"
+        prompts_section += f"```json\n{raw_response}\n```\n</details>\n\n"
+
+        prompts_section += "</details>"
+        parts.append(prompts_section)
+
     # 1. 실행 계획 (접이식)
     if plan_content:
         parts.append(f"<details>\n<summary>📋 실행 계획</summary>\n\n{plan_content}\n</details>")
-    
+
     # 2. 완료된 Steps (각각 접이식)
     if step_outputs:
         for step in step_outputs:
@@ -183,17 +211,17 @@ def build_streaming_response(
             result = step.get("result", "")
             if header and result:
                 parts.append(header + result)
-    
+
     # 3. 현재 진행 상황 (실시간)
     if current_thinking and not final_answer:
         parts.append(f"\n💭 *{current_thinking}*")
-    
+
     # 4. 최종 답변
     if final_answer:
         if parts:
             parts.append("\n---\n")
         parts.append(final_answer)
-    
+
     return "\n\n".join(filter(None, parts))
 
 
@@ -221,6 +249,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
     ]
 
     # 상태 변수
+    plan_prompts = None
     plan_content = ""
     step_outputs = []
     current_thinking = ""
@@ -237,20 +266,32 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             if state.orchestrator._stopped:
                 was_stopped = True
                 break
-            
+
             # ===== Planning Phase =====
             if step.type == StepType.PLANNING:
                 current_thinking = step.content
                 history[-1]["content"] = f"📋 *{step.content}*"
                 yield history, gr.update(interactive=False), gr.update(interactive=True)
-            
+
+            # ===== Plan Prompt (새로운 단계) =====
+            elif step.type == StepType.PLAN_PROMPT:
+                plan_prompts = step.content
+                # Plan prompts만 표시 (아직 plan_content는 없음)
+                response = build_streaming_response(
+                    plan_prompts=plan_prompts,
+                    step_outputs=step_outputs
+                )
+                history[-1]["content"] = response
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
+
             # ===== Plan Ready =====
             elif step.type == StepType.PLAN_READY:
                 plan_content = step.content
                 current_thinking = "계획 수립 완료, 실행 시작..."
-                
-                # 계획 표시
+
+                # 계획 표시 (plan_prompts 포함)
                 response = build_streaming_response(
+                    plan_prompts=plan_prompts,
                     plan_content=plan_content,
                     step_outputs=step_outputs,
                     current_thinking=current_thinking
@@ -261,8 +302,9 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             # ===== Thinking =====
             elif step.type == StepType.THINKING:
                 current_thinking = step.content
-                
+
                 response = build_streaming_response(
+                    plan_prompts=plan_prompts,
                     plan_content=plan_content,
                     step_outputs=step_outputs,
                     current_thinking=current_thinking
@@ -290,8 +332,9 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     "header": current_step_info["header"],
                     "result": f"⏳ *실행 중...*\n</details>"
                 }]
-                
+
                 response = build_streaming_response(
+                    plan_prompts=plan_prompts,
                     plan_content=plan_content,
                     step_outputs=temp_outputs,
                     current_thinking=""
@@ -317,6 +360,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                 
                 # 업데이트
                 response = build_streaming_response(
+                    plan_prompts=plan_prompts,
                     plan_content=plan_content,
                     step_outputs=step_outputs,
                     current_thinking=""
@@ -327,8 +371,9 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             # ===== Final Answer =====
             elif step.type == StepType.FINAL_ANSWER:
                 final_answer = step.content
-                
+
                 response = build_streaming_response(
+                    plan_prompts=plan_prompts,
                     plan_content=plan_content,
                     step_outputs=step_outputs,
                     current_thinking="",
@@ -340,8 +385,9 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             # ===== Error =====
             elif step.type == StepType.ERROR:
                 error_msg = f"❌ **오류 발생**\n\n{step.content}"
-                
+
                 response = build_streaming_response(
+                    plan_prompts=plan_prompts,
                     plan_content=plan_content,
                     step_outputs=step_outputs,
                     current_thinking="",
@@ -354,6 +400,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
         if was_stopped:
             stop_msg = "⏹️ **사용자에 의해 중지됨**"
             response = build_streaming_response(
+                plan_prompts=plan_prompts,
                 plan_content=plan_content,
                 step_outputs=step_outputs,
                 current_thinking="",
@@ -367,6 +414,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
         state.orchestrator._stopped = True
         stop_msg = "⏹️ **중지됨**"
         response = build_streaming_response(
+            plan_prompts=plan_prompts,
             plan_content=plan_content,
             step_outputs=step_outputs,
             current_thinking="",

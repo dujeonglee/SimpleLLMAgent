@@ -99,6 +99,7 @@ class LLMResponse:
 
 class StepType(Enum):
     PLANNING = "planning"
+    PLAN_PROMPT = "plan_prompt"
     PLAN_READY = "plan_ready"
     THINKING = "thinking"
     TOOL_CALL = "tool_call"
@@ -533,9 +534,20 @@ Respond with JSON only."""
         self.logger.debug("Query classification 완료", {"needs_tools": self._needs_tools})
 
         # 4. LLM 호출하여 plan 생성 (또는 direct answer)
-        plan_response = self._call_plan_llm(user_query)
+        plan_response, plan_system_prompt, plan_user_prompt, plan_raw_response = self._call_plan_llm(user_query)
 
-        # 4. Direct answer 처리
+        # 4.5. Plan prompt 정보 yield
+        yield StepInfo(
+            type=StepType.PLAN_PROMPT,
+            step=0,
+            content={
+                "system_prompt": plan_system_prompt,
+                "user_prompt": plan_user_prompt,
+                "raw_response": plan_raw_response
+            }
+        )
+
+        # 5. Direct answer 처리
         if plan_response.get("direct_answer"):
             self.storage.complete_session(
                 final_response=plan_response["direct_answer"],
@@ -598,8 +610,12 @@ Does this query require tool usage? Respond with JSON only."""
             self.logger.warn(f"Classification 파싱 실패, 기본값(True) 사용: {e}")
             return True  # 파싱 실패 시 안전하게 True 반환
 
-    def _call_plan_llm(self, user_query: str) -> Dict:
-        """LLM에 계획 수립 또는 direct answer 요청"""
+    def _call_plan_llm(self, user_query: str) -> tuple[Dict, str, str, str]:
+        """LLM에 계획 수립 또는 direct answer 요청
+
+        Returns:
+            tuple: (parsed_response, system_prompt, user_prompt, raw_response)
+        """
         if not self._needs_tools:
             # 툴이 필요 없는 경우: direct answer 생성
             system_prompt = """You are a helpful AI assistant. Answer the user's question directly and concisely.
@@ -721,10 +737,10 @@ Create an execution plan. Respond with JSON only."""
                 "has_direct_answer": "direct_answer" in parsed,
                 "needs_tools": self._needs_tools
             })
-            return parsed
+            return parsed, system_prompt, user_prompt, raw_response
         except Exception as e:
             self.logger.error(f"Plan 파싱 실패: {e}")
-            return {"direct_answer": f"계획 수립 중 오류가 발생했습니다: {str(e)}"}
+            return {"direct_answer": f"계획 수립 중 오류가 발생했습니다: {str(e)}"}, system_prompt, user_prompt, raw_response
 
     # =========================================================================
     # Execution Methods
