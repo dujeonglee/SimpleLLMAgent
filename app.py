@@ -163,7 +163,10 @@ def build_streaming_response(
     final_answer: str = ""
 ) -> str:
     """
-    실시간 스트리밍 응답 구성
+    실시간 스트리밍 응답 구성 (구조화된 텍스트 포맷)
+
+    HTML details 태그 대신 유니코드 구분선과 이모지를 사용한 텍스트 포맷.
+    HTML 파싱 이슈 없이 안정적으로 정보를 표시합니다.
 
     Args:
         plan_prompts: 계획 생성 프롬프트 정보 (system_prompt, user_prompt, raw_response)
@@ -177,67 +180,85 @@ def build_streaming_response(
 
     parts = []
 
-    # 0. Plan generation prompts (접이식 - 📋 실행 계획 앞에 위치)
+    # 0. Plan generation prompts (구조화된 텍스트)
     if plan_prompts:
         system_prompt = plan_prompts.get("system_prompt", "")
         user_prompt = plan_prompts.get("user_prompt", "")
         raw_response = plan_prompts.get("raw_response", "")
 
-        prompts_section = "<details>\n<summary>🔍 Plan Generation Details</summary>\n\n"
+        prompts_section = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        prompts_section += "🔍 **Plan Generation Details**\n"
+        prompts_section += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
         # System Prompt
-        prompts_section += "<details>\n<summary><b>System Prompt</b></summary>\n\n"
-        prompts_section += f"```\n{system_prompt}\n```\n</details>\n\n"
+        prompts_section += "📋 **System Prompt**\n"
+        prompts_section += "────────────────────────────────────────────────\n"
+        prompts_section += f"```\n{system_prompt}\n```\n\n"
 
         # User Prompt
-        prompts_section += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
-        prompts_section += f"```\n{user_prompt}\n```\n</details>\n\n"
+        prompts_section += "💬 **User Prompt**\n"
+        prompts_section += "────────────────────────────────────────────────\n"
+        prompts_section += f"```\n{user_prompt}\n```\n\n"
 
         # LLM Response
-        prompts_section += "<details>\n<summary><b>LLM Response</b></summary>\n\n"
-        prompts_section += f"```json\n{raw_response}\n```\n</details>\n\n"
+        prompts_section += "🤖 **LLM Response**\n"
+        prompts_section += "────────────────────────────────────────────────\n"
+        prompts_section += f"```json\n{raw_response}\n```\n"
 
-        prompts_section += "</details>"
         parts.append(prompts_section)
 
-    # 1. 실행 계획 (접이식)
+    # 1. 실행 계획
     if plan_content:
-        parts.append(f"<details>\n<summary>📋 실행 계획</summary>\n\n{plan_content}\n</details>")
+        plan_section = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        plan_section += "📋 **실행 계획**\n"
+        plan_section += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        plan_section += f"{plan_content}\n"
+        parts.append(plan_section)
 
-    # 2. 완료된 Steps (각각 접이식, 프롬프트 정보 포함)
+    # 2. 완료된 Steps (구조화된 텍스트, 프롬프트 정보 포함)
     if step_outputs:
         for step in step_outputs:
-            header = step.get("header", "")
+            tool_name = step.get("tool_name", "unknown")
+            action = step.get("action", "unknown")
+            step_num = step.get("step", 0)
             prompts = step.get("prompts", None)
             result = step.get("result", "")
+            status = step.get("status", "completed")
 
-            if header:
-                step_content = header
+            step_content = "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            step_content += f"🔧 **Step {step_num}: {tool_name}.{action}**\n"
+            step_content += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-                # Step의 프롬프트 정보 추가 (아코디언 형태)
-                if prompts:
-                    system_prompt = prompts.get("system_prompt", "")
-                    user_prompt = prompts.get("user_prompt", "")
-                    raw_response = prompts.get("raw_response", "")
+            # Step 프롬프트 정보
+            if prompts:
+                system_prompt = prompts.get("system_prompt", "")
+                user_prompt = prompts.get("user_prompt", "")
+                raw_response = prompts.get("raw_response", "")
 
-                    step_content += "<details>\n<summary><b>🔍 Execution Details</b></summary>\n\n"
+                step_content += "🔍 **Execution Details**\n\n"
 
-                    # System Prompt
-                    step_content += "<details>\n<summary><b>System Prompt</b></summary>\n\n"
-                    step_content += f"```\n{system_prompt}\n```\n</details>\n\n"
+                # System Prompt
+                step_content += "📋 System Prompt\n"
+                step_content += "────────────────────────────────────────────────\n"
+                step_content += f"```\n{system_prompt}\n```\n\n"
 
-                    # User Prompt
-                    step_content += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
-                    step_content += f"```\n{user_prompt}\n```\n</details>\n\n"
+                # User Prompt
+                step_content += "💬 User Prompt\n"
+                step_content += "────────────────────────────────────────────────\n"
+                step_content += f"```\n{user_prompt}\n```\n\n"
 
-                    # LLM Response
-                    step_content += "<details>\n<summary><b>LLM Response</b></summary>\n\n"
-                    step_content += f"```json\n{raw_response}\n```\n</details>\n\n"
+                # LLM Response
+                step_content += "🤖 LLM Response\n"
+                step_content += "────────────────────────────────────────────────\n"
+                step_content += f"```json\n{raw_response}\n```\n\n"
 
-                    step_content += "</details>\n\n"
+            # 결과
+            if status == "running":
+                step_content += "⏳ *실행 중...*\n"
+            else:
+                step_content += f"{result}\n"
 
-                step_content += result
-                parts.append(step_content)
+            parts.append(step_content)
 
     # 3. 현재 진행 상황 (실시간)
     if current_thinking and not final_answer:
@@ -246,10 +267,10 @@ def build_streaming_response(
     # 4. 최종 답변
     if final_answer:
         if parts:
-            parts.append("\n---\n")
+            parts.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
         parts.append(final_answer)
 
-    return "\n\n".join(filter(None, parts))
+    return "\n".join(filter(None, parts))
 
 
 def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None, None]:
@@ -355,18 +376,14 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     "step": step.step,
                     "tool_name": tool_name,
                     "action": action,
-                    "header": f"\n<details open>\n<summary>🔧 Step {step.step}: {tool_name}.{action}</summary>\n\n",
                     "prompts": current_step_prompts,  # 저장된 프롬프트 정보 사용
                     "result": "",
                     "status": "running"
                 }
                 current_step_prompts = None  # 사용 후 초기화
-                
-                # 진행 중 표시 (접이식 열린 상태)
-                temp_outputs = step_outputs + [{
-                    "header": current_step_info["header"],
-                    "result": f"⏳ *실행 중...*\n</details>"
-                }]
+
+                # 진행 중 표시
+                temp_outputs = step_outputs + [current_step_info]
 
                 response = build_streaming_response(
                     plan_prompts=plan_prompts,
@@ -387,9 +404,12 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
 
                 # Step 완료 정보 저장 (프롬프트 정보 포함)
                 completed_step = {
-                    "header": current_step_info.get("header", f"\n<details>\n<summary>🔧 Step {step.step}: {tool_name}.{action}</summary>\n\n"),
+                    "step": step.step,
+                    "tool_name": tool_name,
+                    "action": action,
                     "prompts": current_step_info.get("prompts", None),
-                    "result": f"✅ 완료\n\n{formatted_result}\n</details>"
+                    "result": f"✅ **완료**\n\n{formatted_result}",
+                    "status": "completed"
                 }
                 step_outputs.append(completed_step)
                 current_step_info = {}
