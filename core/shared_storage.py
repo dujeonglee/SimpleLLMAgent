@@ -6,8 +6,7 @@ Agent/Tool 간 데이터 공유 및 실행 결과 관리를 담당.
 
 구조:
 - context: 현재 작업 컨텍스트 (user_query, session_id)
-- results: step별 실행 결과 리스트
-- all_results: 모든 결과의 영구 저장소 (result_id → ToolResult)
+- all_results: 모든 세션의 실행 결과 영구 저장소 (session_id_result_id → ToolResult)
 """
 
 import json
@@ -49,10 +48,9 @@ class SharedStorage:
     Multi-Agent Chatbot의 중앙 데이터 저장소
 
     역할:
-    1. context: 현재 작업 상태 관리
-    2. results: 실행 결과 누적 (현재 세션)
-    3. all_results: 모든 결과의 영구 저장소
-    4. get_available_results_summary(): LLM에 전달할 컨텍스트 요약 생성
+    1. context: 현재 작업 상태 관리 (user_query, session_id)
+    2. all_results: 모든 세션의 실행 결과 저장소 (session_id_result_id → ToolResult)
+    3. get_available_results_summary(): 현재 세션의 결과 요약 생성 (LLM 전달용)
     """
     
     # Output truncate 설정
@@ -65,8 +63,7 @@ class SharedStorage:
 
         # 핵심 데이터 구조
         self._context: Optional[Context] = None
-        self._results: List[ToolResult] = []  # 현재 세션의 results
-        self._all_results: Dict[str, ToolResult] = {}  # 모든 results (result_id → ToolResult)
+        self._all_results: Dict[str, ToolResult] = {}  # 모든 results (session_id_result_id → ToolResult)
 
         self.logger.info("SharedStorage 초기화 완료")
     
@@ -78,7 +75,6 @@ class SharedStorage:
         self._context = Context(
             user_query=user_query
         )
-        self._results = []
 
         self.logger.info(f"새 세션 시작: {self._context.session_id}", {
             "user_query": user_query
@@ -118,10 +114,7 @@ class SharedStorage:
         # session_id 설정
         tool_result.session_id = self._context.session_id
 
-        # 현재 세션의 results에 추가
-        self._results.append(tool_result)
-
-        # 영구 저장소에도 추가 (session_id_result_id를 키로 사용)
+        # 영구 저장소에 추가 (session_id_result_id를 키로 사용)
         composite_key = f"{tool_result.session_id}_{tool_result.result_id}"
         self._all_results[composite_key] = tool_result
 
@@ -138,34 +131,46 @@ class SharedStorage:
         return tool_result
     
     def get_results(self) -> List[Dict]:
-        """모든 실행 결과 반환"""
-        return [r.to_dict() for r in self._results]
-    
+        """현재 세션의 모든 실행 결과 반환"""
+        if not self._context:
+            return []
+        current_session_results = [
+            r for r in self._all_results.values()
+            if r.session_id == self._context.session_id
+        ]
+        # Step 순서대로 정렬
+        current_session_results.sort(key=lambda r: r.step)
+        return [r.to_dict() for r in current_session_results]
+
     def get_last_result(self) -> Optional[Dict]:
-        """마지막 실행 결과 반환"""
-        if not self._results:
+        """현재 세션의 마지막 실행 결과 반환"""
+        results = self.get_results()
+        if not results:
             return None
-        return self._results[-1].to_dict()
-    
+        return results[-1]
+
     def get_last_output(self) -> Any:
-        """마지막 실행의 output만 반환"""
-        if not self._results:
+        """현재 세션의 마지막 실행 output만 반환"""
+        result = self.get_last_result()
+        if not result:
             return None
-        return self._results[-1].output
-    
+        return result.get('output')
+
     def get_result_by_step(self, step: int) -> Optional[Dict]:
-        """특정 step의 결과 반환"""
-        for r in self._results:
-            if r.step == step:
+        """현재 세션의 특정 step 결과 반환"""
+        if not self._context:
+            return None
+        for r in self._all_results.values():
+            if r.session_id == self._context.session_id and r.step == step:
                 return r.to_dict()
         return None
-    
+
     def get_output_by_step(self, step: int) -> Any:
-        """특정 step의 output만 반환"""
-        for r in self._results:
-            if r.step == step:
-                return r.output
-        return None
+        """현재 세션의 특정 step output만 반환"""
+        result = self.get_result_by_step(step)
+        if not result:
+            return None
+        return result.get('output')
 
     def get_result_by_id(self, result_id: str) -> Optional[Dict]:
         """
@@ -216,7 +221,7 @@ class SharedStorage:
 
     def get_available_results_summary(self, max_output_preview: int = 100) -> str:
         """
-        사용 가능한 결과 목록을 REF 형식으로 반환 (user query 포함)
+        현재 세션의 사용 가능한 결과 목록을 REF 형식으로 반환 (user query 포함)
 
         Args:
             max_output_preview: Output 미리보기 최대 길이
@@ -230,20 +235,30 @@ class SharedStorage:
         if self._context:
             sections.append(f"## User Request\n{self._context.user_query}")
 
-        # 결과 목록
-        if not self._results:
-            sections.append("## Execution Results\nNo previous results available.")
+        # 현재 세션의 결과 목록 가져오기
+        if not self._context:
+            sections.append("## Execution Results\nNo active session.")
         else:
-            lines = []
-            for r in self._results:
-                composite_key = f"{r.session_id}_{r.result_id}"
-                output_preview = self._truncate_output_with_length(r.output, max_output_preview)
+            current_session_results = [
+                r for r in self._all_results.values()
+                if r.session_id == self._context.session_id
+            ]
+            # Step 순서대로 정렬
+            current_session_results.sort(key=lambda r: r.step)
 
-                lines.append(
-                    f"- [RESULT:{composite_key}]: Step {r.step} ({r.executor}.{r.action})\n"
-                    f"  Preview: {output_preview}"
-                )
-            sections.append(f"## Execution Results\n" + "\n".join(lines))
+            if not current_session_results:
+                sections.append("## Execution Results\nNo previous results available.")
+            else:
+                lines = []
+                for r in current_session_results:
+                    composite_key = f"{r.session_id}_{r.result_id}"
+                    output_preview = self._truncate_output_with_length(r.output, max_output_preview)
+
+                    lines.append(
+                        f"- [RESULT:{composite_key}]: Step {r.step} ({r.executor}.{r.action})\n"
+                        f"  Preview: {output_preview}"
+                    )
+                sections.append(f"## Execution Results\n" + "\n".join(lines))
 
         return "\n\n".join(sections)
 
@@ -255,73 +270,17 @@ class SharedStorage:
         if not self._context:
             raise RuntimeError("No active session")
 
+        # 현재 세션의 결과 개수 계산
+        current_session_results = [
+            r for r in self._all_results.values()
+            if r.session_id == self._context.session_id
+        ]
+
         self.logger.info(f"세션 완료: {self._context.session_id}", {
             "status": status,
-            "total_steps": len(self._results),
+            "total_steps": len(current_session_results),
             "final_response_preview": final_response[:200] + "..." if len(final_response) > 200 else final_response
         })
-    
-    # =========================================================================
-    # 파일 저장/로드
-    # =========================================================================
-    def save_to_file(self, filepath: str):
-        """현재 상태를 파일에 저장"""
-        data = {
-            "context": self._context.to_dict() if self._context else None,
-            "results": [r.to_dict() for r in self._results],
-            "all_results": {rid: r.to_dict() for rid, r in self._all_results.items()},
-            "saved_at": datetime.now().isoformat()
-        }
-
-        # 디렉토리 생성
-        os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-
-        self.logger.info(f"파일 저장 완료: {filepath}", {
-            "context_exists": self._context is not None,
-            "results_count": len(self._results),
-            "all_results_count": len(self._all_results)
-        })
-    
-    def load_from_file(self, filepath: str) -> bool:
-        """파일에서 상태 로드"""
-        if not os.path.exists(filepath):
-            self.logger.error(f"파일 없음: {filepath}")
-            return False
-
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            from core.base_tool import ToolResult
-
-            # Context 복원
-            if data.get("context"):
-                self._context = Context.from_dict(data["context"])
-            else:
-                self._context = None
-
-            # Results 복원
-            self._results = [ToolResult.from_dict(r) for r in data.get("results", [])]
-
-            # All Results 복원
-            all_results_data = data.get("all_results", {})
-            self._all_results = {rid: ToolResult.from_dict(r) for rid, r in all_results_data.items()}
-
-            self.logger.info(f"파일 로드 완료: {filepath}", {
-                "context_exists": self._context is not None,
-                "results_count": len(self._results),
-                "all_results_count": len(self._all_results),
-                "saved_at": data.get("saved_at")
-            })
-
-            return True
-
-        except Exception as e:
-            self.logger.error(f"파일 로드 실패: {filepath}", {"error": str(e)})
-            return False
     
     # =========================================================================
     # 유틸리티
@@ -366,13 +325,11 @@ class SharedStorage:
     def reset(self):
         """전체 초기화 (현재 세션만, all_results는 유지)"""
         self._context = None
-        self._results = []
         self.logger.info("SharedStorage 초기화 완료 (현재 세션만, all_results 보존)")
 
     def reset_all(self):
         """완전 초기화 (all_results 포함)"""
         self._context = None
-        self._results = []
         self._all_results = {}
         self.logger.info("SharedStorage 완전 초기화 완료")
     
@@ -384,20 +341,29 @@ class SharedStorage:
         print("\n" + "=" * 60)
         print("SharedStorage 현재 상태")
         print("=" * 60)
-        
+
         print("\n[Context]")
         if self._context:
             print(f"  Session ID: {self._context.session_id}")
             print(f"  User Query: {self._context.user_query}")
         else:
             print("  (활성 세션 없음)")
-        
+
         print("\n[Results - Current Session]")
-        if self._results:
-            for r in self._results:
-                print(f"  Step {r.step}: {r.executor}.{r.action} - {r.status} (ID: {r.result_id})")
+        if self._context:
+            current_session_results = [
+                r for r in self._all_results.values()
+                if r.session_id == self._context.session_id
+            ]
+            current_session_results.sort(key=lambda r: r.step)
+
+            if current_session_results:
+                for r in current_session_results:
+                    print(f"  Step {r.step}: {r.executor}.{r.action} - {r.status} (ID: {r.result_id})")
+            else:
+                print("  (결과 없음)")
         else:
-            print("  (결과 없음)")
+            print("  (활성 세션 없음)")
 
         print("\n[All Results - Persistent Storage]")
         if self._all_results:
