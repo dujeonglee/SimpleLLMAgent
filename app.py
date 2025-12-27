@@ -198,9 +198,9 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             # StepPromptEvent는 빈 문자열을 반환 (ToolResultEvent에 포함되므로)
             # 따라서 빈 문자열이 아닐 때만 추가
             if display_text:
-                if accumulated_output and "💭" in accumulated_output[-1][:1]:
+                if accumulated_output and "💭" in accumulated_output[-1][:2]:
                     accumulated_output.pop()
-                elif accumulated_output and "⏳" in accumulated_output[-1][:1]:
+                elif accumulated_output and "⏳" in accumulated_output[-1][:2]:
                     accumulated_output.pop()
 
                 accumulated_output.append(display_text)

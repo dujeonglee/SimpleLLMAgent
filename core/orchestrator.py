@@ -548,13 +548,6 @@ Respond with JSON only."""
         # 4. LLM 호출하여 plan 생성 (또는 direct answer)
         plan_response, plan_system_prompt, plan_user_prompt, plan_raw_response = self._call_plan_llm(user_query)
 
-        # 4.5. Plan prompt 정보 yield
-        yield PlanPromptEvent(
-            system_prompt=plan_system_prompt,
-            user_prompt=plan_user_prompt,
-            raw_response=plan_raw_response
-        )
-
         # 5. Direct answer 처리
         if plan_response.get("direct_answer"):
             self.storage.complete_session(
@@ -563,6 +556,12 @@ Respond with JSON only."""
             )
             yield FinalAnswerEvent(answer=plan_response["direct_answer"])
             return
+
+        yield PlanPromptEvent(
+            system_prompt=plan_system_prompt,
+            user_prompt=plan_user_prompt,
+            raw_response=plan_raw_response
+        )
 
         # 5. Plan 파싱
         self._plan = self._parse_plan(plan_response.get("plan", []))

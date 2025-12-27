@@ -239,8 +239,7 @@ class FinalAnswerEvent(ExecutionEvent):
     answer: str
 
     def to_display(self) -> str:
-        output = "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        output += self.answer
+        output = self.answer
         return output
 
     def to_dict(self) -> Dict:
