@@ -40,6 +40,7 @@ workspace/
 logs/
 *.log
 *.txt
+!requirements.txt
 .gradio/
 TODO.md
 

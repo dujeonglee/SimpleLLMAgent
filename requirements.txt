@@ -1,0 +1,16 @@
+# Core Dependencies
+gradio>=4.0.0
+requests>=2.31.0
+
+# Python Standard Library (included with Python, listed for reference)
+# - json
+# - os
+# - sys
+# - re
+# - dataclasses
+# - datetime
+# - typing
+# - abc
+# - enum
+# - shutil
+# - warnings
