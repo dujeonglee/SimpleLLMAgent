@@ -18,9 +18,22 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field, asdict
-import uuid
 
 from .debug_logger import DebugLogger
+
+
+# =============================================================================
+# Global Session Counter
+# =============================================================================
+_session_counter = 0
+
+
+def _get_next_session_id() -> str:
+    """전역 카운터를 사용하여 단조 증가하는 Session ID 생성"""
+    global _session_counter
+    session_id = f"Session{_session_counter}"
+    _session_counter += 1
+    return session_id
 
 
 # =============================================================================
@@ -34,7 +47,7 @@ from .debug_logger import DebugLogger
 class Context:
     """현재 작업 컨텍스트"""
     user_query: str
-    session_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    session_id: str = field(default_factory=_get_next_session_id)
 
     def to_dict(self) -> Dict:
         return asdict(self)
