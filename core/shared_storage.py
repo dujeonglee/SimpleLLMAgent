@@ -15,7 +15,6 @@ Agent/Tool 간 데이터 공유 및 실행 결과 관리를 담당.
 """
 
 import json
-import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field, asdict
@@ -310,32 +309,7 @@ class SharedStorage:
             return output_str[:max_length] + f"... ({len(output_str)} chars total)"
         return output_str
 
-    def _summarize_input(self, input_data: Dict) -> str:
-        """Input 데이터를 간략하게 요약 (중요한 것만)"""
-        if not input_data:
-            return "{}"
-
-        # 3개 이하 파라미터면 전체 표시
-        if len(input_data) <= 3:
-            return json.dumps(input_data, ensure_ascii=False, default=str)
-
-        # 많으면 키만 표시
-        keys = list(input_data.keys())
-        return f"{{{', '.join(keys[:3])}, ... ({len(input_data)} params)}}"
-
-    def clear_all_results(self):
-        """모든 results 초기화 (영구 저장소 포함)"""
-        count = len(self._all_results)
-        self._all_results = {}
-        self.logger.info(f"모든 Results 초기화: {count}개 결과 삭제")
-
     def reset(self):
         """전체 초기화 (모든 세션 삭제, all_results는 유지)"""
         self._contexts = []
         self.logger.info("SharedStorage 초기화 완료 (모든 세션 삭제, all_results 보존)")
-
-    def reset_all(self):
-        """완전 초기화 (all_results 포함)"""
-        self._contexts = []
-        self._all_results = {}
-        self.logger.info("SharedStorage 완전 초기화 완료")
