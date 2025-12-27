@@ -64,84 +64,72 @@ class LLMTool(BaseTool):
         return {
             "codereview": ActionSchema(
                 name="codereview",
-                description="Perform comprehensive code review with detailed feedback on code quality, best practices, potential bugs, and improvement suggestions",
+                description="Perform comprehensive code review with detailed feedback on code quality, best practices, potential bugs, and improvement suggestions. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("codereview_content", "str", False,
-                               "Code content to review (provide either content or file_path)", None),
-                    ActionParam("codereview_file_path", "str", False,
-                               "File path to the code file to review (provide either content or file_path)", None),
-                    ActionParam("codereview_instruction", "str", True,
-                               "Specific review instructions or focus areas (e.g., 'Focus on error handling', 'Check for security issues', 'Review API design')"),
+                    ActionParam("codereview_content", "str", True,
+                               "Code content to review. Can be: direct code string, file path (auto-detected and read), or [RESULT:SessionX_Y] reference"),
+                    ActionParam("codereview_instruction", "str", False,
+                               "Specific review instructions or focus areas. Can be: direct string, file path, or [RESULT:SessionX_Y] (e.g., 'Focus on error handling', 'Check for security issues')"),
                 ],
                 output_type="str",
                 output_description="Detailed code review report in Markdown format with specific recommendations"
             ),
             "architectureanalysis": ActionSchema(
                 name="architectureanalysis",
-                description="Analyze software architecture, design patterns, system structure, component relationships, and architectural trade-offs",
+                description="Analyze software architecture, design patterns, system structure, component relationships, and architectural trade-offs. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("architectureanalysis_content", "str", False,
-                               "Code or architectural documentation to analyze (provide either content or file_path)", None),
-                    ActionParam("architectureanalysis_file_path", "str", False,
-                               "File path to analyze architecture from (provide either content or file_path)", None),
-                    ActionParam("architectureanalysis_instruction", "str", True,
-                               "Specific analysis instructions (e.g., 'Evaluate scalability', 'Identify design patterns', 'Suggest architectural improvements')"),
+                    ActionParam("architectureanalysis_content", "str", True,
+                               "Code or architectural documentation to analyze. Can be: direct string, file path (auto-detected and read), or [RESULT:SessionX_Y] reference"),
+                    ActionParam("architectureanalysis_instruction", "str", False,
+                               "Specific analysis instructions. Can be: direct string, file path, or [RESULT:SessionX_Y] (e.g., 'Evaluate scalability', 'Identify design patterns')"),
                 ],
                 output_type="str",
                 output_description="Architecture analysis report with patterns identified and recommendations in Markdown format"
             ),
             "codedoc": ActionSchema(
                 name="codedoc",
-                description="Generate comprehensive documentation for code including docstrings, comments, API documentation, and usage examples",
+                description="Generate comprehensive documentation for code including docstrings, comments, API documentation, and usage examples. Returns documentation as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("codedoc_content", "str", False,
-                               "Code to document (provide either content or file_path)", None),
-                    ActionParam("codedoc_file_path", "str", False,
-                               "File path to the code file to document (provide either content or file_path)", None),
-                    ActionParam("codedoc_instruction", "str", True,
-                               "Documentation instructions (e.g., 'Generate API docs', 'Add inline comments', 'Create usage examples', 'Write README section')"),
+                    ActionParam("codedoc_content", "str", True,
+                               "Code to document. Can be: direct code string, file path (auto-detected and read), or [RESULT:SessionX_Y] reference"),
+                    ActionParam("codedoc_instruction", "str", False,
+                               "Documentation instructions. Can be: direct string, file path, or [RESULT:SessionX_Y] (e.g., 'Generate API docs', 'Add inline comments', 'Create usage examples')"),
                 ],
                 output_type="str",
                 output_description="Generated documentation in appropriate format (Markdown, docstrings, or comments)"
             ),
             "staticanalysis": ActionSchema(
                 name="staticanalysis",
-                description="Perform static code analysis to detect bugs, security vulnerabilities, code smells, type errors, and potential runtime issues without executing code",
+                description="Perform static code analysis to detect bugs, security vulnerabilities, code smells, type errors, and potential runtime issues without executing code. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("staticanalysis_content", "str", False,
-                               "Code to analyze statically (provide either content or file_path)", None),
-                    ActionParam("staticanalysis_file_path", "str", False,
-                               "File path to the code file for static analysis (provide either content or file_path)", None),
-                    ActionParam("staticanalysis_instruction", "str", True,
-                               "Analysis focus instructions (e.g., 'Check for null pointer dereferences', 'Find memory leaks', 'Detect SQL injection risks')"),
+                    ActionParam("staticanalysis_content", "str", True,
+                               "Code to analyze statically. Can be: direct code string, file path (auto-detected and read), or [RESULT:SessionX_Y] reference"),
+                    ActionParam("staticanalysis_instruction", "str", False,
+                               "Analysis focus instructions. Can be: direct string, file path, or [RESULT:SessionX_Y] (e.g., 'Check for null pointer dereferences', 'Find memory leaks', 'Detect SQL injection risks')"),
                 ],
                 output_type="str",
                 output_description="Static analysis report with categorized issues, severity levels, and fix suggestions in Markdown format"
             ),
             "codewriter": ActionSchema(
                 name="codewriter",
-                description="Generate new code from scratch or modify existing code based on specifications, requirements, or improvement guidelines",
+                description="Generate new code from scratch or modify existing code based on specifications, requirements, or improvement guidelines. Returns code as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("codewriter_content", "str", False,
-                               "Existing code to modify or extend (optional for new code generation)", None),
-                    ActionParam("codewriter_file_path", "str", False,
-                               "File path to existing code for modification (optional for new code generation)", None),
+                               "Existing code to modify or extend (optional for new code generation). Can be: direct code string, file path (auto-detected and read), or [RESULT:SessionX_Y] reference", None),
                     ActionParam("codewriter_instruction", "str", True,
-                               "Code writing instructions and specifications (e.g., 'Write a REST API handler', 'Add error handling to this function', 'Refactor using design pattern X')"),
+                               "Code writing instructions and specifications. Can be: direct string, file path, or [RESULT:SessionX_Y] (e.g., 'Write a REST API handler', 'Add error handling to this function')"),
                 ],
                 output_type="str",
                 output_description="Generated or modified code with explanatory comments"
             ),
             "general": ActionSchema(
                 name="general",
-                description="Handle general queries, questions, and tasks that don't fit into specialized categories. Free-form interaction with LLM for any other purpose.",
+                description="Handle general queries, questions, and tasks that don't fit into specialized categories. Free-form interaction with LLM for any other purpose. Returns response as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("general_content", "str", False,
-                               "Content or context for the query (optional, provide either content or file_path)", None),
-                    ActionParam("general_file_path", "str", False,
-                               "File path to read content from (optional, provide either content or file_path)", None),
+                               "Content or context for the query (optional). Can be: direct string, file path (auto-detected and read), or [RESULT:SessionX_Y] reference", None),
                     ActionParam("general_prompt", "str", True,
-                               "Your question, request, or instruction for the LLM"),
+                               "Your question, request, or instruction for the LLM. Can be: direct string, file path, or [RESULT:SessionX_Y]"),
                 ],
                 output_type="str",
                 output_description="LLM response to the general query"
@@ -157,37 +145,31 @@ class LLMTool(BaseTool):
         if action == "codereview":
             return self._codereview(
                 get_param("content"),
-                get_param("file_path"),
                 get_param("instruction")
             )
         elif action == "architectureanalysis":
             return self._architectureanalysis(
                 get_param("content"),
-                get_param("file_path"),
                 get_param("instruction")
             )
         elif action == "codedoc":
             return self._codedoc(
                 get_param("content"),
-                get_param("file_path"),
                 get_param("instruction")
             )
         elif action == "staticanalysis":
             return self._staticanalysis(
                 get_param("content"),
-                get_param("file_path"),
                 get_param("instruction")
             )
         elif action == "codewriter":
             return self._codewriter(
                 get_param("content"),
-                get_param("file_path"),
                 get_param("instruction")
             )
         elif action == "general":
             return self._general(
                 get_param("content"),
-                get_param("file_path"),
                 get_param("prompt")
             )
         else:
@@ -198,41 +180,75 @@ class LLMTool(BaseTool):
     # =========================================================================
     # Note: _resolve_path() and _validate_path() methods are inherited from BaseTool
 
-    def _get_content(self, content: Optional[str], file_path: Optional[str]) -> tuple[str, str]:
+    def _get_content(self, content: Optional[str]) -> tuple[str, str]:
         """
-        Get content from either direct content or file path.
+        Get content from either direct string, file path, or REF (already substituted by orchestrator).
+
+        Auto-detects if content is a file path and reads it.
+        REF references ([RESULT:SessionX_Y]) are already substituted by orchestrator before reaching here.
+
         Returns (content, error_message). If error_message is not empty, content retrieval failed.
         """
-        if content:
-            return content, ""
+        if not content:
+            return "", "Content must be provided (either as direct string, file path, or [RESULT:SessionX_Y])"
 
-        if file_path:
-            # Validate and resolve file path
-            is_valid, resolved_or_error = self._validate_path(file_path)
-            if not is_valid:
-                return "", resolved_or_error
+        # Try to validate and resolve as path
+        is_valid, resolved_or_error = self._validate_path(content)
 
+        if is_valid:
             resolved = resolved_or_error
+            file_existed = os.path.exists(resolved)
 
-            # Read from file
-            try:
-                if not os.path.exists(resolved):
-                    return "", f"File not found: {file_path}"
+            if file_existed:
+                # This is a file path - read it
+                try:
+                    with open(resolved, 'r', encoding='utf-8') as f:
+                        file_content = f.read()
+                    self.logger.debug(f"Auto-detected file path and read: {resolved} ({len(file_content)} bytes)")
+                    return file_content, ""
+                except UnicodeDecodeError as e:
+                    return "", f"Encoding error reading {content}: {str(e)}"
+                except Exception as e:
+                    return "", f"Failed to read file {content}: {str(e)}"
 
-                if not os.path.isfile(resolved):
-                    return "", f"Not a file: {file_path}"
+        # Not a file path (or doesn't exist) - treat as direct content
+        # This includes plain strings and already-substituted REF values
+        return content, ""
 
-                with open(resolved, 'r', encoding='utf-8') as f:
-                    file_content = f.read()
+    def _get_instruction(self, instruction: Optional[str]) -> tuple[str, str]:
+        """
+        Get instruction from either direct string, file path, or REF (already substituted by orchestrator).
 
-                self.logger.debug(f"Read file: {resolved} ({len(file_content)} bytes)")
-                return file_content, ""
-            except UnicodeDecodeError as e:
-                return "", f"Encoding error reading {file_path}: {str(e)}"
-            except Exception as e:
-                return "", f"Failed to read file {file_path}: {str(e)}"
+        Auto-detects if instruction is a file path and reads it.
+        REF references ([RESULT:SessionX_Y]) are already substituted by orchestrator before reaching here.
 
-        return "", "Either 'content' or 'file_path' must be provided"
+        Returns (instruction, error_message). If error_message is not empty, retrieval failed.
+        """
+        if not instruction:
+            return "", ""  # Instruction is optional for most actions
+
+        # Try to validate and resolve as path
+        is_valid, resolved_or_error = self._validate_path(instruction)
+
+        if is_valid:
+            resolved = resolved_or_error
+            file_existed = os.path.exists(resolved)
+
+            if file_existed:
+                # This is a file path - read it
+                try:
+                    with open(resolved, 'r', encoding='utf-8') as f:
+                        file_content = f.read()
+                    self.logger.debug(f"Auto-detected instruction file path and read: {resolved} ({len(file_content)} bytes)")
+                    return file_content, ""
+                except UnicodeDecodeError as e:
+                    return "", f"Encoding error reading instruction file {instruction}: {str(e)}"
+                except Exception as e:
+                    return "", f"Failed to read instruction file {instruction}: {str(e)}"
+
+        # Not a file path (or doesn't exist) - treat as direct instruction string
+        # This includes plain strings and already-substituted REF values
+        return instruction, ""
 
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """Call the LLM with system and user prompts"""
@@ -268,9 +284,13 @@ This is a test mock response. Actual analysis results will be provided when conn
     # Action Implementations
     # =========================================================================
 
-    def _codereview(self, content: Optional[str], file_path: Optional[str], instruction: str) -> ToolResult:
+    def _codereview(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
         """Perform comprehensive code review"""
-        code_content, error = self._get_content(content, file_path)
+        code_content, error = self._get_content(content)
+        if error:
+            return ToolResult.error_result(error)
+
+        instruction_text, error = self._get_instruction(instruction)
         if error:
             return ToolResult.error_result(error)
 
@@ -286,8 +306,8 @@ Provide a comprehensive code review covering:
 Format your response in Markdown with clear sections.
 Be specific and provide code examples for your suggestions."""
 
-        if instruction:
-            system_prompt += f"\n\nSpecific focus areas: {instruction}"
+        if instruction_text:
+            system_prompt += f"\n\nSpecific focus areas: {instruction_text}"
 
         user_prompt = f"Please review the following code:\n\n```\n{code_content}\n```"
 
@@ -298,15 +318,19 @@ Be specific and provide code examples for your suggestions."""
                 metadata={
                     "action": "codereview",
                     "content_length": len(code_content),
-                    "instruction": instruction
+                    "instruction": instruction_text
                 }
             )
         except Exception as e:
             return ToolResult.error_result(f"Code review failed: {str(e)}")
 
-    def _architectureanalysis(self, content: Optional[str], file_path: Optional[str], instruction: str) -> ToolResult:
+    def _architectureanalysis(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
         """Analyze software architecture"""
-        arch_content, error = self._get_content(content, file_path)
+        arch_content, error = self._get_content(content)
+        if error:
+            return ToolResult.error_result(error)
+
+        instruction_text, error = self._get_instruction(instruction)
         if error:
             return ToolResult.error_result(error)
 
@@ -322,8 +346,8 @@ Analyze the architecture and provide insights on:
 
 Format your response in Markdown with diagrams where helpful."""
 
-        if instruction:
-            system_prompt += f"\n\nSpecific analysis focus: {instruction}"
+        if instruction_text:
+            system_prompt += f"\n\nSpecific analysis focus: {instruction_text}"
 
         user_prompt = f"Please analyze the architecture of:\n\n```\n{arch_content}\n```"
 
@@ -334,15 +358,19 @@ Format your response in Markdown with diagrams where helpful."""
                 metadata={
                     "action": "architectureanalysis",
                     "content_length": len(arch_content),
-                    "instruction": instruction
+                    "instruction": instruction_text
                 }
             )
         except Exception as e:
             return ToolResult.error_result(f"Architecture analysis failed: {str(e)}")
 
-    def _codedoc(self, content: Optional[str], file_path: Optional[str], instruction: str) -> ToolResult:
+    def _codedoc(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
         """Generate code documentation"""
-        code_content, error = self._get_content(content, file_path)
+        code_content, error = self._get_content(content)
+        if error:
+            return ToolResult.error_result(error)
+
+        instruction_text, error = self._get_instruction(instruction)
         if error:
             return ToolResult.error_result(error)
 
@@ -357,8 +385,8 @@ Generate comprehensive documentation including:
 Follow language-specific documentation conventions (docstrings, JSDoc, etc.).
 Format appropriately for the code's language and context."""
 
-        if instruction:
-            system_prompt += f"\n\nDocumentation requirements: {instruction}"
+        if instruction_text:
+            system_prompt += f"\n\nDocumentation requirements: {instruction_text}"
 
         user_prompt = f"Please document the following code:\n\n```\n{code_content}\n```"
 
@@ -369,15 +397,19 @@ Format appropriately for the code's language and context."""
                 metadata={
                     "action": "codedoc",
                     "content_length": len(code_content),
-                    "instruction": instruction
+                    "instruction": instruction_text
                 }
             )
         except Exception as e:
             return ToolResult.error_result(f"Documentation generation failed: {str(e)}")
 
-    def _staticanalysis(self, content: Optional[str], file_path: Optional[str], instruction: str) -> ToolResult:
+    def _staticanalysis(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
         """Perform static code analysis"""
-        code_content, error = self._get_content(content, file_path)
+        code_content, error = self._get_content(content)
+        if error:
+            return ToolResult.error_result(error)
+
+        instruction_text, error = self._get_instruction(instruction)
         if error:
             return ToolResult.error_result(error)
 
@@ -394,8 +426,8 @@ Categorize issues by severity (Critical, High, Medium, Low).
 Provide specific line references and fix suggestions.
 Format your response in Markdown."""
 
-        if instruction:
-            system_prompt += f"\n\nFocus areas: {instruction}"
+        if instruction_text:
+            system_prompt += f"\n\nFocus areas: {instruction_text}"
 
         user_prompt = f"Please perform static analysis on:\n\n```\n{code_content}\n```"
 
@@ -406,20 +438,24 @@ Format your response in Markdown."""
                 metadata={
                     "action": "staticanalysis",
                     "content_length": len(code_content),
-                    "instruction": instruction
+                    "instruction": instruction_text
                 }
             )
         except Exception as e:
             return ToolResult.error_result(f"Static analysis failed: {str(e)}")
 
-    def _codewriter(self, content: Optional[str], file_path: Optional[str], instruction: str) -> ToolResult:
+    def _codewriter(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
         """Generate or modify code"""
-        # For codewriter, content/file_path is optional (new code generation)
+        # For codewriter, content is optional (new code generation)
         existing_code = ""
-        if content or file_path:
-            existing_code, error = self._get_content(content, file_path)
+        if content:
+            existing_code, error = self._get_content(content)
             if error:
                 return ToolResult.error_result(error)
+
+        instruction_text, error = self._get_instruction(instruction)
+        if error:
+            return ToolResult.error_result(error)
 
         if existing_code:
             system_prompt = """You are an expert software engineer.
@@ -435,7 +471,7 @@ Modify or extend the provided code according to the specifications.
 {existing_code}
 ```
 
-Instructions: {instruction}
+Instructions: {instruction_text}
 
 Provide the modified code with explanatory comments."""
         else:
@@ -447,7 +483,7 @@ Write new code from scratch according to the specifications.
 - Write clean, readable, maintainable code
 - Include usage examples if helpful"""
 
-            user_prompt = f"""Instructions: {instruction}
+            user_prompt = f"""Instructions: {instruction_text}
 
 Provide the complete code with explanatory comments."""
 
@@ -457,21 +493,26 @@ Provide the complete code with explanatory comments."""
                 output=response,
                 metadata={
                     "action": "codewriter",
-                    "instruction": instruction,
+                    "instruction": instruction_text,
                     "modification": bool(existing_code)
                 }
             )
         except Exception as e:
             return ToolResult.error_result(f"Code generation failed: {str(e)}")
 
-    def _general(self, content: Optional[str], file_path: Optional[str], prompt: str) -> ToolResult:
+    def _general(self, content: Optional[str], prompt: Optional[str]) -> ToolResult:
         """Handle general queries"""
         # Get content if provided
         context_content = ""
-        if content or file_path:
-            context_content, error = self._get_content(content, file_path)
+        if content:
+            context_content, error = self._get_content(content)
             if error:
                 return ToolResult.error_result(error)
+
+        # Get prompt (can also be from file or REF)
+        prompt_text, error = self._get_instruction(prompt)
+        if error:
+            return ToolResult.error_result(error)
 
         system_prompt = """You are a helpful AI assistant.
 Answer questions clearly and concisely.
@@ -484,9 +525,9 @@ Provide accurate, well-reasoned responses."""
 {context_content}
 ```
 
-Question/Request: {prompt}"""
+Question/Request: {prompt_text}"""
         else:
-            user_prompt = prompt
+            user_prompt = prompt_text
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
@@ -494,7 +535,7 @@ Question/Request: {prompt}"""
                 output=response,
                 metadata={
                     "action": "general",
-                    "prompt_length": len(prompt),
+                    "prompt_length": len(prompt_text),
                     "has_context": bool(context_content),
                     "context_length": len(context_content) if context_content else 0
                 }
