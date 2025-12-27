@@ -685,22 +685,45 @@ If tools are needed:
             "step": 1,
             "tool_name": "file_tool",
             "action": "read",
-            "description": "Read the source file"
+            "description": "Read the source file",
+            "params_hint": {{
+                "read_path": "config.json"
+            }}
         }},
         {{
             "step": 2,
             "tool_name": "llm_tool",
             "action": "analyze",
-            "description": "Analyze the file content"
+            "description": "Analyze the file content",
+            "params_hint": {{
+                "content": "[RESULT:result_001]",
+                "prompt": "Analyze this configuration"
+            }}
         }},
         {{
             "step": 3,
             "tool_name": "file_tool",
             "action": "write",
-            "description": "Save analysis result to file"
+            "description": "Save analysis result to file",
+            "params_hint": {{
+                "write_path": "analysis.txt",
+                "write_content": "[RESULT:result_002]"
+            }}
         }}
     ]
 }}
+
+## IMPORTANT: Provide params_hint for Each Step
+For each step in the plan, include a "params_hint" field with suggested parameters:
+- Use exact parameter names with action prefix (e.g., read_path, write_content, analyze_prompt)
+- Provide concrete values when known from the user query (e.g., file names, prompts)
+- Use [RESULT:result_XXX] placeholders for outputs from previous steps
+- Use descriptive placeholders for unknown content (e.g., "<user feedback>", "<analysis result>")
+
+Example params_hint patterns:
+- File operations: {{"read_path": "example.py"}}, {{"write_path": "output.txt", "write_content": "[RESULT:result_001]"}}
+- LLM operations: {{"content": "[RESULT:result_001]", "prompt": "Analyze vulnerabilities"}}
+- Mixed: {{"file_path": "test.c", "instruction": "Modify based on static.md"}}
 
 If no tools needed:
 {{
@@ -980,12 +1003,32 @@ Guidelines:
 - All required parameters must be provided
 - Respond with valid JSON only"""
 
+        # params_hint를 포맷팅 (있는 경우)
+        params_hint_section = ""
+        if planned_step.params_hint:
+            params_hint_section = f"""
+## Suggested Parameters (from Planning Phase)
+{json.dumps(planned_step.params_hint, indent=2, ensure_ascii=False)}
+
+**IMPORTANT**: The suggested parameters above are hints from the planning phase.
+- Use them as a starting point if they are reasonable and valid
+- Verify parameter names match the action schema (with correct action prefix)
+- Adjust or override based on current execution context
+- Replace [RESULT:xxx] placeholders with actual result references if available
+- Ensure all required parameters are provided
+"""
+        else:
+            params_hint_section = """
+## Suggested Parameters
+No parameter suggestions were provided in the planning phase.
+"""
+
         user_prompt = f"""{execution_context}
 
 ## Current Step to Execute
 Step {planned_step.step}: {planned_step.tool_name}.{planned_step.action}
 Description: {planned_step.description}
-
+{params_hint_section}
 IMPORTANT: Check the description for file names and map them to appropriate parameters.
 
 Provide exact parameters for this step. Respond with JSON only."""
