@@ -518,11 +518,10 @@ Respond with JSON only."""
         result = self.tools.execute(
             tool_name=tool_call.name,
             action=tool_call.action,
-            params=params
+            params=params,
+            session_id=self.storage.get_current_context().session_id,
+            step=self._current_step
         )
-
-        # ToolResult에 step 정보 설정 (나머지는 BaseTool.execute()에서 자동 설정됨)
-        result.step = self._current_step
 
         return result
     

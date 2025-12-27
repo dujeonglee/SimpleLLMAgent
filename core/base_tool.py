@@ -219,30 +219,36 @@ class BaseTool(ABC):
     # Public Methods
     # =========================================================================
     
-    def execute(self, action: str, params: Dict = None) -> ToolResult:
+    def execute(self, action: str, params: Dict = None, session_id: str = "", step: int = 0) -> ToolResult:
         """
         Tool action 실행 (공통 로직)
-        
+
         1. action 존재 확인
         2. params 검증
         3. _execute_action 호출
         4. 결과 포맷팅 (성공 시)
         5. 결과 로깅
+
+        Args:
+            action: 실행할 action 이름
+            params: action 파라미터
+            session_id: 실행 세션 ID
+            step: 실행 step 번호
         """
         params = params or {}
         start_time = datetime.now()
-        
-        self.logger.info(f"실행 시작: {action}", {"params": params})
-        
+
+        self.logger.info(f"실행 시작: {action}", {"params": params, "session_id": session_id, "step": step})
+
         # 1. params 검증
         is_valid, error_msg = self.validate_params(action, params)
         if not is_valid:
             self.logger.error(f"파라미터 검증 실패: {error_msg}")
             return ToolResult.error_result(error_msg)
-        
+
         # 2. 기본값 적용
         params = self._apply_defaults(action, params)
-        
+
         # 3. 실행
         try:
             result = self._execute_action(action, params)
@@ -251,11 +257,13 @@ class BaseTool(ABC):
             self.logger.error(error_msg, {"exception": type(e).__name__})
             result = ToolResult.error_result(error_msg)
 
-        # 4. executor/action 정보 설정
+        # 4. executor/action/session/step 정보 설정
         result.executor = self.name
         result.action = action
         result.executor_type = "tool"
         result.input = params
+        result.session_id = session_id
+        result.step = step
 
         # 5. 실행 시간 기록
         elapsed = (datetime.now() - start_time).total_seconds()
@@ -453,15 +461,17 @@ class ToolRegistry:
         """등록된 Tool 이름 목록"""
         return list(self._tools.keys())
     
-    def execute(self, tool_name: str, action: str, params: Dict = None) -> ToolResult:
+    def execute(self, tool_name: str, action: str, params: Dict = None, session_id: str = "", step: int = 0) -> ToolResult:
         """
         Tool 이름으로 직접 실행
-        
+
         Args:
             tool_name: Tool 이름
             action: Action 이름
             params: 파라미터
-            
+            session_id: 실행 세션 ID
+            step: 실행 step 번호
+
         Returns:
             ToolResult: 실행 결과
         """
@@ -470,5 +480,5 @@ class ToolRegistry:
             error_msg = f"Tool '{tool_name}' not found. Available: {self.list_tools()}"
             self.logger.error(error_msg)
             return ToolResult.error_result(error_msg)
-        
-        return tool.execute(action, params)
+
+        return tool.execute(action, params, session_id, step)
