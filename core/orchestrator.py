@@ -902,13 +902,24 @@ Create an execution plan. Respond with JSON only."""
         Returns:
             tuple: (LLMResponse, prompt_info dict with system_prompt, user_prompt, raw_response)
         """
-        # 현재 step의 tool schema만 가져오기
+        # 현재 step의 tool과 action 가져오기
         current_tool = self.tools.get(planned_step.tool_name)
         if not current_tool:
             raise ValueError(f"Tool not found: {planned_step.tool_name}")
 
+        # 현재 action의 schema 가져오기
+        action_schema = current_tool.get_action_schema(planned_step.action)
+        if not action_schema:
+            raise ValueError(f"Action not found: {planned_step.tool_name}.{planned_step.action}")
+
+        # 특정 action의 스키마만 JSON으로 변환
+        action_schema_dict = action_schema.to_dict()
         tool_schema = json.dumps(
-            current_tool.get_schema(),
+            {
+                "tool": planned_step.tool_name,
+                "action": planned_step.action,
+                "schema": action_schema_dict
+            },
             indent=2,
             ensure_ascii=False
         )
@@ -917,12 +928,11 @@ Create an execution plan. Respond with JSON only."""
         execution_context = self.storage.get_available_results_summary(max_output_preview=300)
 
         # 현재 action의 schema를 기반으로 response format 생성
-        action_schema = current_tool.get_action_schema(planned_step.action)
         response_format = self._generate_response_format(planned_step, action_schema)
 
         system_prompt = f"""You are executing a planned task. Provide exact parameters for the current step.
 
-## Current Tool Schema
+## Current Action Schema
 {tool_schema}
 
 ## Using Previous Results
@@ -964,7 +974,7 @@ Description: "Read config.json and write summary to output.md"
 Guidelines:
 - Look for file extensions (.py, .c, .md, .txt, .json, etc.) in the description
 - Map file names to the most appropriate parameter (content, file_path, instruction, etc.)
-- Check the tool schema to see which parameters accept file_path
+- Check the action schema above to see which parameters accept file_path
 - Only use [RESULT:xxx] when the file content is already available from a previous step
 
 ## Rules
