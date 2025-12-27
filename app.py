@@ -168,7 +168,7 @@ def build_streaming_response(
     Args:
         plan_prompts: 계획 생성 프롬프트 정보 (system_prompt, user_prompt, raw_response)
         plan_content: 실행 계획
-        step_outputs: 완료된 step들의 결과
+        step_outputs: 완료된 step들의 결과 (각 step에 prompts 정보 포함 가능)
         current_thinking: 현재 진행 중인 생각/상태
         final_answer: 최종 답변 (있을 경우)
     """
@@ -204,13 +204,40 @@ def build_streaming_response(
     if plan_content:
         parts.append(f"<details>\n<summary>📋 실행 계획</summary>\n\n{plan_content}\n</details>")
 
-    # 2. 완료된 Steps (각각 접이식)
+    # 2. 완료된 Steps (각각 접이식, 프롬프트 정보 포함)
     if step_outputs:
         for step in step_outputs:
             header = step.get("header", "")
+            prompts = step.get("prompts", None)
             result = step.get("result", "")
-            if header and result:
-                parts.append(header + result)
+
+            if header:
+                step_content = header
+
+                # Step의 프롬프트 정보 추가 (아코디언 형태)
+                if prompts:
+                    system_prompt = prompts.get("system_prompt", "")
+                    user_prompt = prompts.get("user_prompt", "")
+                    raw_response = prompts.get("raw_response", "")
+
+                    step_content += "<details>\n<summary><b>🔍 Execution Details</b></summary>\n\n"
+
+                    # System Prompt
+                    step_content += "<details>\n<summary><b>System Prompt</b></summary>\n\n"
+                    step_content += f"```\n{system_prompt}\n```\n</details>\n\n"
+
+                    # User Prompt
+                    step_content += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
+                    step_content += f"```\n{user_prompt}\n```\n</details>\n\n"
+
+                    # LLM Response
+                    step_content += "<details>\n<summary><b>LLM Response</b></summary>\n\n"
+                    step_content += f"```json\n{raw_response}\n```\n</details>\n\n"
+
+                    step_content += "</details>\n\n"
+
+                step_content += result
+                parts.append(step_content)
 
     # 3. 현재 진행 상황 (실시간)
     if current_thinking and not final_answer:
@@ -255,6 +282,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
     current_thinking = ""
     final_answer = ""
     current_step_info = {}
+    current_step_prompts = None  # STEP_PROMPT를 임시 저장
     was_stopped = False
 
     # 초기 상태 표시
@@ -311,21 +339,28 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                 )
                 history[-1]["content"] = response
                 yield history, gr.update(interactive=False), gr.update(interactive=True)
-            
+
+            # ===== Step Prompt (Step 실행 프롬프트 정보) =====
+            elif step.type == StepType.STEP_PROMPT:
+                # 프롬프트 정보를 임시로 저장 (TOOL_CALL에서 사용)
+                current_step_prompts = step.content
+
             # ===== Tool Call (시작) =====
             elif step.type == StepType.TOOL_CALL:
                 tool_name = step.tool_name or "unknown"
                 action = step.action or "unknown"
-                
-                # 새 step 시작
+
+                # 새 step 시작 (프롬프트 정보 포함)
                 current_step_info = {
                     "step": step.step,
                     "tool_name": tool_name,
                     "action": action,
                     "header": f"\n<details open>\n<summary>🔧 Step {step.step}: {tool_name}.{action}</summary>\n\n",
+                    "prompts": current_step_prompts,  # 저장된 프롬프트 정보 사용
                     "result": "",
                     "status": "running"
                 }
+                current_step_prompts = None  # 사용 후 초기화
                 
                 # 진행 중 표시 (접이식 열린 상태)
                 temp_outputs = step_outputs + [{
@@ -346,18 +381,19 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             elif step.type == StepType.TOOL_RESULT:
                 tool_name = step.tool_name or current_step_info.get("tool_name", "unknown")
                 action = step.action or current_step_info.get("action", "unknown")
-                
+
                 # 결과 포맷팅
                 formatted_result = format_tool_result(step.content, tool_name, action)
-                
-                # Step 완료 정보 저장
+
+                # Step 완료 정보 저장 (프롬프트 정보 포함)
                 completed_step = {
                     "header": current_step_info.get("header", f"\n<details>\n<summary>🔧 Step {step.step}: {tool_name}.{action}</summary>\n\n"),
+                    "prompts": current_step_info.get("prompts", None),
                     "result": f"✅ 완료\n\n{formatted_result}\n</details>"
                 }
                 step_outputs.append(completed_step)
                 current_step_info = {}
-                
+
                 # 업데이트
                 response = build_streaming_response(
                     plan_prompts=plan_prompts,

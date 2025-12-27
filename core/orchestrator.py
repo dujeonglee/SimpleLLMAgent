@@ -102,6 +102,7 @@ class StepType(Enum):
     PLAN_PROMPT = "plan_prompt"
     PLAN_READY = "plan_ready"
     THINKING = "thinking"
+    STEP_PROMPT = "step_prompt"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     FINAL_ANSWER = "final_answer"
@@ -772,7 +773,16 @@ Create an execution plan. Respond with JSON only."""
                 yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
                 return
 
-            execution_response = self._get_execution_params(user_query, planned_step)
+            execution_response, prompt_info = self._get_execution_params(user_query, planned_step)
+
+            # Step 프롬프트 정보 yield
+            yield StepInfo(
+                type=StepType.STEP_PROMPT,
+                step=self._current_step,
+                content=prompt_info,
+                tool_name=planned_step.tool_name,
+                action=planned_step.action
+            )
 
             # LLM 호출 후 중지 체크
             if self._stopped:
@@ -885,9 +895,12 @@ Create an execution plan. Respond with JSON only."""
         # 5. 최종 응답 반환
         yield StepInfo(type=StepType.FINAL_ANSWER, step=self._current_step + 1, content=final_response)
 
-    def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> LLMResponse:
+    def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> tuple[LLMResponse, Dict]:
         """
         계획된 step 실행을 위한 정확한 파라미터 결정
+
+        Returns:
+            tuple: (LLMResponse, prompt_info dict with system_prompt, user_prompt, raw_response)
         """
         # 현재 step의 tool schema만 가져오기
         current_tool = self.tools.get(planned_step.tool_name)
@@ -973,7 +986,15 @@ IMPORTANT: Check the description for file names and map them to appropriate para
 Provide exact parameters for this step. Respond with JSON only."""
 
         raw_response = self._call_llm_api(system_prompt, user_prompt)
-        return self._parse_tool_call_response(raw_response)
+
+        # 프롬프트 정보 수집
+        prompt_info = {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "raw_response": raw_response
+        }
+
+        return self._parse_tool_call_response(raw_response), prompt_info
     
     # =========================================================================
     # Helper Methods
