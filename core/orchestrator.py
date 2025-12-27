@@ -395,7 +395,7 @@ class Orchestrator:
         )
 
         # 사용 가능한 결과 목록
-        available_results = self._format_available_results()
+        available_results = self.storage.get_available_results_summary()
 
         system_prompt = f"""You are analyzing a tool execution error and providing corrected parameters.
 
@@ -872,9 +872,6 @@ Create an execution plan. Respond with JSON only."""
     def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> LLMResponse:
         """
         계획된 step 실행을 위한 정확한 파라미터 결정
-
-        Note: user_query는 API 일관성을 위해 파라미터로 유지하지만,
-              실제로는 execution_summary에 이미 포함되어 있음
         """
         # 현재 step의 tool schema만 가져오기
         current_tool = self.tools.get(planned_step.tool_name)
@@ -887,17 +884,8 @@ Create an execution plan. Respond with JSON only."""
             ensure_ascii=False
         )
 
-        # get_summary()를 사용하여 실행 컨텍스트 가져오기 (user_query 포함)
-        execution_summary = self.storage.get_summary(
-            include_all_outputs=True,
-            include_previous_sessions=False,  # 이전 세션 제외 (토큰 절약)
-            include_plan=True,
-            include_session_info=False,
-            max_output_length=300
-        )
-
-        # 사용 가능한 결과 목록 (REF 형식)
-        available_results = self._format_available_results()
+        # 실행 컨텍스트 가져오기 (user_query + 결과 목록)
+        execution_context = self.storage.get_available_results_summary(max_output_preview=300)
 
         # 현재 action의 schema를 기반으로 response format 생성
         action_schema = current_tool.get_action_schema(planned_step.action)
@@ -923,9 +911,6 @@ Only generate new content when you need to:
 - Add new information not available in previous steps
 
 Use this syntax in any parameter value to insert the output from a previous step.
-
-## Available Previous Step Results
-{available_results}
 
 ## Response Format for Current Step
 {response_format}
@@ -961,8 +946,7 @@ Guidelines:
 - All required parameters must be provided
 - Respond with valid JSON only"""
 
-        user_prompt = f"""## Execution Context
-{execution_summary}
+        user_prompt = f"""{execution_context}
 
 ## Current Step to Execute
 Step {planned_step.step}: {planned_step.tool_name}.{planned_step.action}
@@ -979,35 +963,6 @@ Provide exact parameters for this step. Respond with JSON only."""
     # Helper Methods
     # =========================================================================
 
-    def _format_available_results(self) -> str:
-        """사용 가능한 이전 결과를 REF 형식으로 포맷"""
-        results = self.storage.get_results()
-        if not results:
-            return "No previous results available."
-
-        lines = []
-        for r in results:
-            result_dict = r if isinstance(r, dict) else r
-            session_id = result_dict.get('session_id', 'unknown')
-            result_id = result_dict.get('result_id', 'unknown')
-            composite_key = f"{session_id}_{result_id}"
-            step = result_dict.get('step', '?')
-            executor = result_dict.get('executor', 'unknown')
-            action = result_dict.get('action', 'unknown')
-            output = result_dict.get('output', '')
-
-            # Output 미리보기
-            if isinstance(output, str) and len(output) > 100:
-                preview = output[:100] + "..."
-            else:
-                preview = str(output)[:100]
-
-            lines.append(
-                f"- [RESULT:{composite_key}]: Step {step} ({executor}.{action})\n"
-                f"  Preview: {preview}"
-            )
-
-        return "\n".join(lines)
 
     def _generate_response_format(self, planned_step: PlannedStep, action_schema: Optional[ActionSchema]) -> str:
         """

@@ -52,7 +52,7 @@ class SharedStorage:
     1. context: 현재 작업 상태 관리
     2. results: 실행 결과 누적 (현재 세션)
     3. all_results: 모든 결과의 영구 저장소
-    4. get_summary(): LLM에 전달할 컨텍스트 요약 생성
+    4. get_available_results_summary(): LLM에 전달할 컨텍스트 요약 생성
     """
     
     # Output truncate 설정
@@ -214,6 +214,39 @@ class SharedStorage:
         """모든 result_id 목록 반환"""
         return list(self._all_results.keys())
 
+    def get_available_results_summary(self, max_output_preview: int = 100) -> str:
+        """
+        사용 가능한 결과 목록을 REF 형식으로 반환 (user query 포함)
+
+        Args:
+            max_output_preview: Output 미리보기 최대 길이
+
+        Returns:
+            str: 사용자 요청 + 포맷된 결과 목록
+        """
+        sections = []
+
+        # 사용자 요청 (항상 포함)
+        if self._context:
+            sections.append(f"## User Request\n{self._context.user_query}")
+
+        # 결과 목록
+        if not self._results:
+            sections.append("## Execution Results\nNo previous results available.")
+        else:
+            lines = []
+            for r in self._results:
+                composite_key = f"{r.session_id}_{r.result_id}"
+                output_preview = self._truncate_output_with_length(r.output, max_output_preview)
+
+                lines.append(
+                    f"- [RESULT:{composite_key}]: Step {r.step} ({r.executor}.{r.action})\n"
+                    f"  Preview: {output_preview}"
+                )
+            sections.append(f"## Execution Results\n" + "\n".join(lines))
+
+        return "\n\n".join(sections)
+
     # =========================================================================
     # Session 관리
     # =========================================================================
@@ -227,106 +260,6 @@ class SharedStorage:
             "total_steps": len(self._results),
             "final_response_preview": final_response[:200] + "..." if len(final_response) > 200 else final_response
         })
-    
-    # =========================================================================
-    # Summary 생성 (LLM 전달용)
-    # =========================================================================
-    def get_summary(
-        self,
-        include_all_outputs: bool = True,
-        include_previous_sessions: bool = False,
-        include_plan: bool = True,
-        include_session_info: bool = False,
-        max_output_length: int = None,
-        max_previous_sessions: int = 10
-    ) -> str:
-        """
-        LLM에 전달할 현재 상태 요약 (영어 기반, 토큰 효율 최적화)
-
-        Args:
-            include_all_outputs: True면 모든 결과 포함, False면 마지막 결과만
-            include_previous_sessions: True면 이전 세션의 결과도 포함
-            include_plan: 실행 계획 포함 여부
-            include_session_info: 세션 ID, 생성 시간 등 메타데이터 포함 여부
-            max_output_length: Output 미리보기 최대 길이 (None이면 기본값 사용)
-            max_previous_sessions: 이전 세션에서 가져올 최대 결과 수
-        """
-        if not self._context:
-            return "No active session"
-
-        sections = []
-
-        # 1. 세션 정보 (옵션)
-        if include_session_info:
-            sections.append(
-                f"## Session Info\n"
-                f"- ID: {self._context.session_id}"
-            )
-
-        # 2. 사용자 요청 (항상 포함)
-        sections.append(f"## User Request\n{self._context.user_query}")
-
-        # 3. 실행 결과
-        target_results = self._results if include_all_outputs else (self._results[-1:] if self._results else [])
-
-        if target_results:
-            results_lines = []
-            output_max = max_output_length or self.OUTPUT_PREVIEW_LENGTH
-
-            for r in target_results:
-                output_preview = self._truncate_output_with_length(r.output, output_max)
-                status_icon = "✓" if r.status == "success" else "✗"
-
-                # Input 간소화: 중요한 파라미터만
-                input_summary = self._summarize_input(r.input)
-
-                composite_key = f"{r.session_id}_{r.result_id}"
-                results_lines.append(
-                    f"[Step {r.step}] {status_icon} {r.executor}.{r.action}\n"
-                    f"  Parameters: {input_summary}\n"
-                    f"  Output: {output_preview}\n"
-                    f"  Ref: [RESULT:{composite_key}]"
-                )
-
-            sections.append(f"## Execution Results\n" + "\n\n".join(results_lines))
-        else:
-            sections.append("## Execution Results\nNo results yet")
-
-        # 5. 이전 세션 결과 (옵션)
-        if include_previous_sessions and self._all_results:
-            other_results = [
-                r for r in self._all_results.values()
-                if r.session_id != self._context.session_id
-            ]
-
-            if other_results:
-                prev_lines = []
-                for r in other_results[-max_previous_sessions:]:
-                    output_preview = self._truncate_output_with_length(
-                        r.output,
-                        max_output_length or 100  # 이전 세션은 더 짧게
-                    )
-                    status_icon = "✓" if r.status == "success" else "✗"
-                    composite_key = f"{r.session_id}_{r.result_id}"
-                    prev_lines.append(
-                        f"  {status_icon} {r.executor}.{r.action}\n"
-                        f"    Output: {output_preview}\n"
-                        f"    Ref: [RESULT:{composite_key}]"
-                    )
-
-                sections.append(
-                    f"## Previous Sessions (Reference Only)\n" + "\n\n".join(prev_lines)
-                )
-
-        self.logger.debug("Summary 생성 완료", {
-            "session_id": self._context.session_id,
-            "results_count": len(target_results),
-            "previous_results_included": include_previous_sessions,
-            "plan_included": include_plan,
-            "session_info_included": include_session_info
-        })
-
-        return "\n\n".join(sections)
     
     # =========================================================================
     # 파일 저장/로드
