@@ -22,8 +22,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.shared_storage import SharedStorage
 from core.base_tool import ToolRegistry
-from core.orchestrator import Orchestrator, StepType
+from core.orchestrator import Orchestrator
 from core.workspace_manager import WorkspaceManager, ConfigManager
+from core.execution_events import (
+    ExecutionEvent,
+    PlanningEvent,
+    PlanPromptEvent,
+    PlanReadyEvent,
+    ThinkingEvent,
+    StepPromptEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    FinalAnswerEvent,
+    ErrorEvent
+)
 from tools.file_tool import FileTool
 from tools.llm_tool import LLMTool
 
@@ -142,346 +154,90 @@ def get_app_state() -> AppState:
 
 
 # =============================================================================
-# Chat Functions (Updated - Real-time Streaming)
+# Chat Functions (Updated - Real-time Streaming with ExecutionEvents)
 # =============================================================================
-
-def format_tool_result(content: str, tool_name: str, action: str, max_length: int = 300) -> str:
-    """Tool 결과를 포맷팅 (길이 제한)"""
-    content_str = str(content)
-    
-    if len(content_str) > max_length:
-        content_str = content_str[:max_length] + f"\n... ({len(str(content))} chars total)"
-    
-    return f"```\n{content_str}\n```"
-
-
-def build_streaming_response(
-    plan_prompts: Dict = None,
-    plan_content: str = "",
-    step_outputs: List[Dict] = None,
-    current_thinking: str = "",
-    final_answer: str = ""
-) -> str:
-    """
-    실시간 스트리밍 응답 구성 (구조화된 텍스트 포맷)
-
-    HTML details 태그 대신 유니코드 구분선과 이모지를 사용한 텍스트 포맷.
-    HTML 파싱 이슈 없이 안정적으로 정보를 표시합니다.
-
-    Args:
-        plan_prompts: 계획 생성 프롬프트 정보 (system_prompt, user_prompt, raw_response)
-        plan_content: 실행 계획
-        step_outputs: 완료된 step들의 결과 (각 step에 prompts 정보 포함 가능)
-        current_thinking: 현재 진행 중인 생각/상태
-        final_answer: 최종 답변 (있을 경우)
-    """
-    if step_outputs is None:
-        step_outputs = []
-
-    parts = []
-
-    # 0. Plan generation prompts (구조화된 텍스트)
-    if plan_prompts:
-        system_prompt = plan_prompts.get("system_prompt", "")
-        user_prompt = plan_prompts.get("user_prompt", "")
-        raw_response = plan_prompts.get("raw_response", "")
-
-        prompts_section = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        prompts_section += "🔍 **Plan Generation Details**\n"
-        prompts_section += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-        # System Prompt
-        prompts_section += "📋 **System Prompt**\n"
-        prompts_section += "────────────────────────────────────────────────\n"
-        prompts_section += f"```\n{system_prompt}\n```\n\n"
-
-        # User Prompt
-        prompts_section += "💬 **User Prompt**\n"
-        prompts_section += "────────────────────────────────────────────────\n"
-        prompts_section += f"```\n{user_prompt}\n```\n\n"
-
-        # LLM Response
-        prompts_section += "🤖 **LLM Response**\n"
-        prompts_section += "────────────────────────────────────────────────\n"
-        prompts_section += f"```json\n{raw_response}\n```\n"
-
-        parts.append(prompts_section)
-
-    # 1. 실행 계획
-    if plan_content:
-        plan_section = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        plan_section += "📋 **실행 계획**\n"
-        plan_section += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        plan_section += f"{plan_content}\n"
-        parts.append(plan_section)
-
-    # 2. 완료된 Steps (구조화된 텍스트, 프롬프트 정보 포함)
-    if step_outputs:
-        for step in step_outputs:
-            tool_name = step.get("tool_name", "unknown")
-            action = step.get("action", "unknown")
-            step_num = step.get("step", 0)
-            prompts = step.get("prompts", None)
-            result = step.get("result", "")
-            status = step.get("status", "completed")
-
-            step_content = "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            step_content += f"🔧 **Step {step_num}: {tool_name}.{action}**\n"
-            step_content += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-            # Step 프롬프트 정보
-            if prompts:
-                system_prompt = prompts.get("system_prompt", "")
-                user_prompt = prompts.get("user_prompt", "")
-                raw_response = prompts.get("raw_response", "")
-
-                step_content += "🔍 **Execution Details**\n\n"
-
-                # System Prompt
-                step_content += "📋 System Prompt\n"
-                step_content += "────────────────────────────────────────────────\n"
-                step_content += f"```\n{system_prompt}\n```\n\n"
-
-                # User Prompt
-                step_content += "💬 User Prompt\n"
-                step_content += "────────────────────────────────────────────────\n"
-                step_content += f"```\n{user_prompt}\n```\n\n"
-
-                # LLM Response
-                step_content += "🤖 LLM Response\n"
-                step_content += "────────────────────────────────────────────────\n"
-                step_content += f"```json\n{raw_response}\n```\n\n"
-
-            # 결과
-            if status == "running":
-                step_content += "⏳ *실행 중...*\n"
-            else:
-                step_content += f"{result}\n"
-
-            parts.append(step_content)
-
-    # 3. 현재 진행 상황 (실시간)
-    if current_thinking and not final_answer:
-        parts.append(f"\n💭 *{current_thinking}*")
-
-    # 4. 최종 답변
-    if final_answer:
-        if parts:
-            parts.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-        parts.append(final_answer)
-
-    return "\n".join(filter(None, parts))
-
 
 def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None, None]:
     """
     채팅 메시지 처리 (Real-time Streaming)
-    
-    각 Step의 진행 상황을 실시간으로 채팅창에 표시합니다.
+
+    각 ExecutionEvent의 to_display() 메서드를 사용하여 실시간으로 표시합니다.
     """
     state = get_app_state()
-    
+
     state.orchestrator._stopped = False
 
     if not message.strip():
         yield history, gr.update(interactive=False), gr.update(interactive=True)
         return
-    
+
     # 파일 목록을 context로 준비 (orchestrator에 전달)
     files_context = state.workspace_manager.get_files_for_prompt()
 
     # 새 대화 추가 (user 메시지)
     history = history + [
-        {"role": "user", "content": message},
-        {"role": "assistant", "content": ""}
+        {"role": "user", "content": message}
     ]
 
-    # 상태 변수
-    plan_prompts = None
-    plan_content = ""
-    step_outputs = []
-    current_thinking = ""
-    final_answer = ""
-    current_step_info = {}
-    current_step_prompts = None  # STEP_PROMPT를 임시 저장
+    # 누적 응답 구성
+    accumulated_output = []
     was_stopped = False
 
     # 초기 상태 표시
     yield history, gr.update(interactive=False), gr.update(interactive=True)
 
     try:
-        for step in state.orchestrator.run_stream(message, files_context):
+        for event in state.orchestrator.run_stream(message, files_context):
             # ===== 중지 체크 =====
             if state.orchestrator._stopped:
                 was_stopped = True
                 break
 
-            # ===== Planning Phase =====
-            if step.type == StepType.PLANNING:
-                current_thinking = step.content
-                history[-1]["content"] = f"📋 *{step.content}*"
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
+            # 각 이벤트의 to_display() 메서드로 출력 생성
+            display_text = event.to_display()
 
-            # ===== Plan Prompt (새로운 단계) =====
-            elif step.type == StepType.PLAN_PROMPT:
-                plan_prompts = step.content
-                # Plan prompts만 표시 (아직 plan_content는 없음)
-                response = build_streaming_response(
-                    plan_prompts=plan_prompts,
-                    step_outputs=step_outputs
-                )
-                history[-1]["content"] = response
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
+            # StepPromptEvent는 빈 문자열을 반환 (ToolResultEvent에 포함되므로)
+            # 따라서 빈 문자열이 아닐 때만 추가
+            if display_text:
+                accumulated_output.append(display_text)
 
-            # ===== Plan Ready =====
-            elif step.type == StepType.PLAN_READY:
-                plan_content = step.content
-                current_thinking = "계획 수립 완료, 실행 시작..."
+            # 최종 응답 업데이트
+            response = "\n".join(accumulated_output)
 
-                # 계획 표시 (plan_prompts 포함)
-                response = build_streaming_response(
-                    plan_prompts=plan_prompts,
-                    plan_content=plan_content,
-                    step_outputs=step_outputs,
-                    current_thinking=current_thinking
-                )
-                history[-1]["content"] = response
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
-            
-            # ===== Thinking =====
-            elif step.type == StepType.THINKING:
-                current_thinking = step.content
-
-                response = build_streaming_response(
-                    plan_prompts=plan_prompts,
-                    plan_content=plan_content,
-                    step_outputs=step_outputs,
-                    current_thinking=current_thinking
-                )
-                history[-1]["content"] = response
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
-
-            # ===== Step Prompt (Step 실행 프롬프트 정보) =====
-            elif step.type == StepType.STEP_PROMPT:
-                # 프롬프트 정보를 임시로 저장 (TOOL_CALL에서 사용)
-                current_step_prompts = step.content
-
-            # ===== Tool Call (시작) =====
-            elif step.type == StepType.TOOL_CALL:
-                tool_name = step.tool_name or "unknown"
-                action = step.action or "unknown"
-
-                # 새 step 시작 (프롬프트 정보 포함)
-                current_step_info = {
-                    "step": step.step,
-                    "tool_name": tool_name,
-                    "action": action,
-                    "prompts": current_step_prompts,  # 저장된 프롬프트 정보 사용
-                    "result": "",
-                    "status": "running"
-                }
-                current_step_prompts = None  # 사용 후 초기화
-
-                # 진행 중 표시
-                temp_outputs = step_outputs + [current_step_info]
-
-                response = build_streaming_response(
-                    plan_prompts=plan_prompts,
-                    plan_content=plan_content,
-                    step_outputs=temp_outputs,
-                    current_thinking=""
-                )
-                history[-1]["content"] = response
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
-            
-            # ===== Tool Result (완료) =====
-            elif step.type == StepType.TOOL_RESULT:
-                tool_name = step.tool_name or current_step_info.get("tool_name", "unknown")
-                action = step.action or current_step_info.get("action", "unknown")
-
-                # 결과 포맷팅
-                formatted_result = format_tool_result(step.content, tool_name, action)
-
-                # Step 완료 정보 저장 (프롬프트 정보 포함)
-                completed_step = {
-                    "step": step.step,
-                    "tool_name": tool_name,
-                    "action": action,
-                    "prompts": current_step_info.get("prompts", None),
-                    "result": f"✅ **완료**\n\n{formatted_result}",
-                    "status": "completed"
-                }
-                step_outputs.append(completed_step)
-                current_step_info = {}
-
-                # 업데이트
-                response = build_streaming_response(
-                    plan_prompts=plan_prompts,
-                    plan_content=plan_content,
-                    step_outputs=step_outputs,
-                    current_thinking=""
-                )
-                history[-1]["content"] = response
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
-            
-            # ===== Final Answer =====
-            elif step.type == StepType.FINAL_ANSWER:
-                final_answer = step.content
-
-                response = build_streaming_response(
-                    plan_prompts=plan_prompts,
-                    plan_content=plan_content,
-                    step_outputs=step_outputs,
-                    current_thinking="",
-                    final_answer=final_answer
-                )
-                history[-1]["content"] = response
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
-            
-            # ===== Error =====
-            elif step.type == StepType.ERROR:
-                error_msg = f"❌ **오류 발생**\n\n{step.content}"
-
-                response = build_streaming_response(
-                    plan_prompts=plan_prompts,
-                    plan_content=plan_content,
-                    step_outputs=step_outputs,
-                    current_thinking="",
-                    final_answer=error_msg
-                )
-                history[-1]["content"] = response
+            # FinalAnswerEvent나 ErrorEvent가 오면 종료 처리
+            if isinstance(event, (FinalAnswerEvent, ErrorEvent)):
+                history[-1] = {"role": "assistant", "content": response}
                 yield history, gr.update(interactive=True), gr.update(interactive=False)
-        
+                break
+            else:
+                # 중간 진행 상황 업데이트
+                if len(history) > 0 and history[-1]["role"] == "assistant":
+                    history[-1] = {"role": "assistant", "content": response}
+                else:
+                    history = history + [{"role": "assistant", "content": response}]
+                yield history, gr.update(interactive=False), gr.update(interactive=True)
+
         # ===== 중지된 경우 메시지 표시 =====
         if was_stopped:
-            stop_msg = "⏹️ **사용자에 의해 중지됨**"
-            response = build_streaming_response(
-                plan_prompts=plan_prompts,
-                plan_content=plan_content,
-                step_outputs=step_outputs,
-                current_thinking="",
-                final_answer=stop_msg
-            )
-            history[-1]["content"] = response
+            accumulated_output.append("\n⏹️ **중지됨**")
+            response = "\n".join(accumulated_output)
+            history[-1] = {"role": "assistant", "content": response}
             yield history, gr.update(interactive=True), gr.update(interactive=False)
     
     except GeneratorExit:
         # Gradio가 generator를 중단할 때
         state.orchestrator._stopped = True
-        stop_msg = "⏹️ **중지됨**"
-        response = build_streaming_response(
-            plan_prompts=plan_prompts,
-            plan_content=plan_content,
-            step_outputs=step_outputs,
-            current_thinking="",
-            final_answer=stop_msg
-        )
-        history[-1]["content"] = response
+        accumulated_output.append("\n⏹️ **중지됨**")
+        response = "\n".join(accumulated_output)
+        if len(history) > 0 and history[-1]["role"] == "assistant":
+            history[-1]["content"] = response
         yield history, gr.update(interactive=True), gr.update(interactive=False)
 
     except Exception as e:
-        error_msg = f"❌ **예외 발생**\n\n{str(e)}"
-        history[-1]["content"] = error_msg
+        accumulated_output.append(f"\n❌ **예외 발생**\n\n{str(e)}")
+        response = "\n".join(accumulated_output)
+        if len(history) > 0 and history[-1]["role"] == "assistant":
+            history[-1]["content"] = response
         yield history, gr.update(interactive=True), gr.update(interactive=False)
     
     finally:

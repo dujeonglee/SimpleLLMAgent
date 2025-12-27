@@ -20,6 +20,18 @@ from core.shared_storage import SharedStorage
 from core.debug_logger import DebugLogger
 from core.base_tool import ToolRegistry, ToolResult, ActionSchema
 from core.json_parser import parse_json_strict
+from core.execution_events import (
+    ExecutionEvent,
+    PlanningEvent,
+    PlanPromptEvent,
+    PlanReadyEvent,
+    ThinkingEvent,
+    StepPromptEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    FinalAnswerEvent,
+    ErrorEvent
+)
 
 
 # =============================================================================
@@ -160,7 +172,7 @@ class Orchestrator:
         storage: SharedStorage,
         llm_config: LLMConfig = None,
         max_steps: int = 10,
-        on_step_complete: Callable[[StepInfo], None] = None,
+        on_step_complete: Callable[[ExecutionEvent], None] = None,
         debug_enabled: bool = True
     ):
         self.tools = tools
@@ -237,36 +249,36 @@ class Orchestrator:
         self.storage.start_session(user_query)
         self.logger.info(f"실행 시작: {user_query[:50]}...")
 
-    def run_stream(self, user_query: str, files_context: str = "") -> Generator[StepInfo, None, None]:
+    def run_stream(self, user_query: str, files_context: str = "") -> Generator[ExecutionEvent, None, None]:
         """Streaming 실행 - Plan & Execute 패턴"""
         self._initialize_session(user_query, files_context)
 
         try:
             # Phase 1: Planning
-            for step_info in self._create_plan(user_query):
-                yield step_info
+            for event in self._create_plan(user_query):
+                yield event
 
                 # Plan이 direct answer나 error로 끝나면 종료
-                if step_info.type in (StepType.FINAL_ANSWER, StepType.ERROR):
+                if isinstance(event, (FinalAnswerEvent, ErrorEvent)):
                     return
 
             # Phase 2: Execution
-            for step_info in self._execute_plan(user_query):
-                yield step_info
+            for event in self._execute_plan(user_query):
+                yield event
 
                 # Execution이 error로 끝나면 종료
-                if step_info.type == StepType.ERROR:
+                if isinstance(event, ErrorEvent):
                     return
 
             # Phase 3: Final Answer
-            for step_info in self._generate_final_answer_stream(user_query):
-                yield step_info
-        
+            for event in self._generate_final_answer_stream(user_query):
+                yield event
+
         except Exception as e:
             error_msg = f"실행 중 오류 발생: {str(e)}"
             self.logger.error(error_msg, {"exception": type(e).__name__})
             self.storage.complete_session(final_response=error_msg, status="error")
-            yield StepInfo(type=StepType.ERROR, step=self._current_step, content=error_msg)
+            yield ErrorEvent(error_message=error_msg)
     
     # =========================================================================
     # Tool Execution (Updated)
@@ -519,15 +531,15 @@ Respond with JSON only."""
     # Planning Methods
     # =========================================================================
     
-    def _create_plan(self, user_query: str) -> Generator[StepInfo, None, None]:
+    def _create_plan(self, user_query: str) -> Generator[ExecutionEvent, None, None]:
         """Phase 1: 전체 실행 계획 수립 및 초기 응답 생성"""
         # 1. Planning 시작
-        yield StepInfo(type=StepType.PLANNING, step=0, content="작업 계획 수립 중...")
+        yield PlanningEvent(message="작업 계획 수립 중...")
 
         # 2. 중지 체크
         if self._stopped:
             self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-            yield StepInfo(type=StepType.ERROR, step=0, content="사용자 요청으로 취소됨")
+            yield ErrorEvent(error_message="사용자 요청으로 취소됨")
             return
 
         # 3. Query classification - 툴 필요 여부 판단
@@ -538,14 +550,10 @@ Respond with JSON only."""
         plan_response, plan_system_prompt, plan_user_prompt, plan_raw_response = self._call_plan_llm(user_query)
 
         # 4.5. Plan prompt 정보 yield
-        yield StepInfo(
-            type=StepType.PLAN_PROMPT,
-            step=0,
-            content={
-                "system_prompt": plan_system_prompt,
-                "user_prompt": plan_user_prompt,
-                "raw_response": plan_raw_response
-            }
+        yield PlanPromptEvent(
+            system_prompt=plan_system_prompt,
+            user_prompt=plan_user_prompt,
+            raw_response=plan_raw_response
         )
 
         # 5. Direct answer 처리
@@ -554,7 +562,7 @@ Respond with JSON only."""
                 final_response=plan_response["direct_answer"],
                 status="completed"
             )
-            yield StepInfo(type=StepType.FINAL_ANSWER, step=0, content=plan_response["direct_answer"])
+            yield FinalAnswerEvent(answer=plan_response["direct_answer"])
             return
 
         # 5. Plan 파싱
@@ -564,12 +572,12 @@ Respond with JSON only."""
         if not self._plan:
             direct_response = plan_response.get("thought", "요청을 처리할 수 없습니다.")
             self.storage.complete_session(final_response=direct_response, status="completed")
-            yield StepInfo(type=StepType.FINAL_ANSWER, step=0, content=direct_response)
+            yield FinalAnswerEvent(answer=direct_response)
             return
 
         # 7. Plan 준비 완료
         plan_summary = self._format_plan_summary()
-        yield StepInfo(type=StepType.PLAN_READY, step=0, content=plan_summary)
+        yield PlanReadyEvent(plan_content=plan_summary)
 
     def _classify_query(self, user_query: str) -> bool:
         """Query가 툴 사용이 필요한지 판단"""
@@ -747,55 +755,49 @@ Create an execution plan. Respond with JSON only."""
     # Execution Methods
     # =========================================================================
 
-    def _execute_plan(self, user_query: str) -> Generator[StepInfo, None, None]:
+    def _execute_plan(self, user_query: str) -> Generator[ExecutionEvent, None, None]:
         """Phase 2: 계획된 단계들을 순차적으로 실행"""
         # Precondition: Plan이 존재해야 함
         if not self._plan:
             error_msg = "CRITICAL: _execute_plan called with empty plan"
             self.logger.error(error_msg)
             self.storage.complete_session(final_response=error_msg, status="error")
-            yield StepInfo(type=StepType.ERROR, step=0, content=error_msg)
+            yield ErrorEvent(error_message=error_msg)
             return
 
         for planned_step in self._plan:
             self._current_step = planned_step.step
             planned_step.status = "running"
 
-            yield StepInfo(
-                type=StepType.THINKING,
-                step=self._current_step,
-                content=f"Step {self._current_step}: {planned_step.description}"
-            )
+            yield ThinkingEvent(message=f"Step {self._current_step}: {planned_step.description}")
 
             # LLM 호출 전 중지 체크
             if self._stopped:
                 self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                yield ErrorEvent(error_message="사용자 요청으로 취소됨")
                 return
 
             execution_response, prompt_info = self._get_execution_params(user_query, planned_step)
 
-            # Step 프롬프트 정보 yield
-            yield StepInfo(
-                type=StepType.STEP_PROMPT,
+            # Step 프롬프트 정보 yield (ToolResultEvent에서 사용할 정보)
+            step_prompt_event = StepPromptEvent(
                 step=self._current_step,
-                content=prompt_info,
                 tool_name=planned_step.tool_name,
-                action=planned_step.action
+                action=planned_step.action,
+                system_prompt=prompt_info["system_prompt"],
+                user_prompt=prompt_info["user_prompt"],
+                raw_response=prompt_info["raw_response"]
             )
+            yield step_prompt_event
 
             # LLM 호출 후 중지 체크
             if self._stopped:
                 self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                yield ErrorEvent(error_message="사용자 요청으로 취소됨")
                 return
 
             if execution_response.thought:
-                yield StepInfo(
-                    type=StepType.THINKING,
-                    step=self._current_step,
-                    content=execution_response.thought
-                )
+                yield ThinkingEvent(message=execution_response.thought)
 
             # Check if tool_calls count is not exactly 1
             tool_calls_count = len(execution_response.tool_calls) if execution_response.tool_calls else 0
@@ -811,10 +813,8 @@ Create an execution plan. Respond with JSON only."""
 
                 planned_step.status = "failed"
 
-                yield StepInfo(
-                    type=StepType.ERROR,
-                    step=self._current_step,
-                    content=f"⚠️ Step {self._current_step} failed: {error_msg}\n\nLLM response: {execution_response.thought or 'No explanation provided'}"
+                yield ErrorEvent(
+                    error_message=f"⚠️ Step {self._current_step} failed: {error_msg}\n\nLLM response: {execution_response.thought or 'No explanation provided'}"
                 )
                 # Continue to next step instead of stopping entirely
                 continue
@@ -825,15 +825,14 @@ Create an execution plan. Respond with JSON only."""
             # Tool 실행 전 중지 체크
             if self._stopped:
                 self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                yield ErrorEvent(error_message="사용자 요청으로 취소됨")
                 return
 
-            yield StepInfo(
-                type=StepType.TOOL_CALL,
+            yield ToolCallEvent(
                 step=self._current_step,
-                content=tool_call.arguments,
                 tool_name=tool_call.name,
-                action=tool_call.action
+                action=tool_call.action,
+                arguments=tool_call.arguments
             )
 
             # Tool 실행 (자동 재시도 포함)
@@ -842,7 +841,7 @@ Create an execution plan. Respond with JSON only."""
             # Tool 실행 후 중지 체크
             if self._stopped:
                 self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-                yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+                yield ErrorEvent(error_message="사용자 요청으로 취소됨")
                 return
 
             # ToolResult를 그대로 전달
@@ -850,40 +849,39 @@ Create an execution plan. Respond with JSON only."""
 
             planned_step.status = "completed" if result.success else "failed"
 
-            yield StepInfo(
-                type=StepType.TOOL_RESULT,
+            yield ToolResultEvent(
                 step=self._current_step,
-                content=result.output if result.success else result.error,
                 tool_name=tool_call.name,
-                action=tool_call.action
+                action=tool_call.action,
+                result=result.output if result.success else result.error,
+                success=result.success,
+                prompt_info=step_prompt_event
             )
 
             if self.on_step_complete:
-                self.on_step_complete(StepInfo(
-                    type=StepType.TOOL_RESULT,
+                self.on_step_complete(ToolResultEvent(
                     step=self._current_step,
-                    content="Step completed"
+                    tool_name=tool_call.name,
+                    action=tool_call.action,
+                    result="Step completed",
+                    success=result.success
                 ))
 
         # 중지된 경우 Final Answer 생성 스킵
         if self._stopped:
             self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+            yield ErrorEvent(error_message="사용자 요청으로 취소됨")
             return
 
-    def _generate_final_answer_stream(self, user_query: str) -> Generator[StepInfo, None, None]:
+    def _generate_final_answer_stream(self, user_query: str) -> Generator[ExecutionEvent, None, None]:
         """Phase 3: 최종 응답 생성"""
         # 1. Thinking 시작
-        yield StepInfo(
-            type=StepType.THINKING,
-            step=self._current_step + 1,
-            content="최종 응답 생성 중..."
-        )
+        yield ThinkingEvent(message="최종 응답 생성 중...")
 
         # 2. 중지 체크
         if self._stopped:
             self.storage.complete_session(final_response="사용자 요청으로 취소됨", status="error")
-            yield StepInfo(type=StepType.ERROR, step=self._current_step, content="사용자 요청으로 취소됨")
+            yield ErrorEvent(error_message="사용자 요청으로 취소됨")
             return
 
         # 3. 최종 응답 생성
@@ -893,7 +891,7 @@ Create an execution plan. Respond with JSON only."""
         self.storage.complete_session(final_response=final_response, status="completed")
 
         # 5. 최종 응답 반환
-        yield StepInfo(type=StepType.FINAL_ANSWER, step=self._current_step + 1, content=final_response)
+        yield FinalAnswerEvent(answer=final_response)
 
     def _get_execution_params(self, user_query: str, planned_step: PlannedStep) -> tuple[LLMResponse, Dict]:
         """
