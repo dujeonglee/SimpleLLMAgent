@@ -988,7 +988,9 @@ Provide exact parameters for this step. Respond with JSON only."""
         lines = []
         for r in results:
             result_dict = r if isinstance(r, dict) else r
+            session_id = result_dict.get('session_id', 'unknown')
             result_id = result_dict.get('result_id', 'unknown')
+            composite_key = f"{session_id}_{result_id}"
             step = result_dict.get('step', '?')
             executor = result_dict.get('executor', 'unknown')
             action = result_dict.get('action', 'unknown')
@@ -1001,7 +1003,7 @@ Provide exact parameters for this step. Respond with JSON only."""
                 preview = str(output)[:100]
 
             lines.append(
-                f"- [RESULT:{result_id}]: Step {step} ({executor}.{action})\n"
+                f"- [RESULT:{composite_key}]: Step {step} ({executor}.{action})\n"
                 f"  Preview: {preview}"
             )
 

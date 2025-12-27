@@ -121,8 +121,9 @@ class SharedStorage:
         # 현재 세션의 results에 추가
         self._results.append(tool_result)
 
-        # 영구 저장소에도 추가 (result_id를 키로 사용)
-        self._all_results[tool_result.result_id] = tool_result
+        # 영구 저장소에도 추가 (session_id_result_id를 키로 사용)
+        composite_key = f"{tool_result.session_id}_{tool_result.result_id}"
+        self._all_results[composite_key] = tool_result
 
         # 로그 출력 (output은 truncate)
         output_preview = self._truncate_output(str(tool_result.output))
@@ -168,10 +169,10 @@ class SharedStorage:
 
     def get_result_by_id(self, result_id: str) -> Optional[Dict]:
         """
-        result_id로 결과 조회 (모든 세션 검색)
+        result_id로 결과 조회
 
         Args:
-            result_id: 결과 ID
+            result_id: 결과 ID (session_id_result_id 형식)
 
         Returns:
             Dict: 결과 dict 또는 None
@@ -186,7 +187,7 @@ class SharedStorage:
         result_id로 output만 조회
 
         Args:
-            result_id: 결과 ID
+            result_id: 결과 ID (session_id_result_id 형식)
 
         Returns:
             Any: output 또는 None
@@ -279,11 +280,12 @@ class SharedStorage:
                 # Input 간소화: 중요한 파라미터만
                 input_summary = self._summarize_input(r.input)
 
+                composite_key = f"{r.session_id}_{r.result_id}"
                 results_lines.append(
                     f"[Step {r.step}] {status_icon} {r.executor}.{r.action}\n"
                     f"  Parameters: {input_summary}\n"
                     f"  Output: {output_preview}\n"
-                    f"  Ref: [RESULT:{r.result_id}]"
+                    f"  Ref: [RESULT:{composite_key}]"
                 )
 
             sections.append(f"## Execution Results\n" + "\n\n".join(results_lines))
@@ -305,10 +307,11 @@ class SharedStorage:
                         max_output_length or 100  # 이전 세션은 더 짧게
                     )
                     status_icon = "✓" if r.status == "success" else "✗"
+                    composite_key = f"{r.session_id}_{r.result_id}"
                     prev_lines.append(
                         f"  {status_icon} {r.executor}.{r.action}\n"
                         f"    Output: {output_preview}\n"
-                        f"    Ref: [RESULT:{r.result_id}]"
+                        f"    Ref: [RESULT:{composite_key}]"
                     )
 
                 sections.append(
