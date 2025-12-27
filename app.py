@@ -26,7 +26,6 @@ from core.orchestrator import Orchestrator
 from core.workspace_manager import WorkspaceManager, ConfigManager
 from core.execution_events import (
     ExecutionEvent,
-    PlanningEvent,
     PlanPromptEvent,
     PlanReadyEvent,
     ThinkingEvent,
@@ -199,6 +198,11 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             # StepPromptEvent는 빈 문자열을 반환 (ToolResultEvent에 포함되므로)
             # 따라서 빈 문자열이 아닐 때만 추가
             if display_text:
+                if accumulated_output and "💭" in accumulated_output[-1][:1]:
+                    accumulated_output.pop()
+                elif accumulated_output and "⏳" in accumulated_output[-1][:1]:
+                    accumulated_output.pop()
+
                 accumulated_output.append(display_text)
 
             # 최종 응답 업데이트

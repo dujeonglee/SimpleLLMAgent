@@ -22,7 +22,6 @@ from core.base_tool import ToolRegistry, ToolResult, ActionSchema
 from core.json_parser import parse_json_strict
 from core.execution_events import (
     ExecutionEvent,
-    PlanningEvent,
     PlanPromptEvent,
     PlanReadyEvent,
     ThinkingEvent,
@@ -534,7 +533,7 @@ Respond with JSON only."""
     def _create_plan(self, user_query: str) -> Generator[ExecutionEvent, None, None]:
         """Phase 1: 전체 실행 계획 수립 및 초기 응답 생성"""
         # 1. Planning 시작
-        yield PlanningEvent(message="작업 계획 수립 중...")
+        yield ThinkingEvent(message="작업 계획 수립 중...")
 
         # 2. 중지 체크
         if self._stopped:

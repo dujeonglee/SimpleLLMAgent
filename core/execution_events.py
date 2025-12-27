@@ -67,25 +67,6 @@ class ExecutionEvent(ABC):
             "timestamp": self.timestamp
         }
 
-
-# =============================================================================
-# Planning Events
-# =============================================================================
-
-@dataclass
-class PlanningEvent(ExecutionEvent):
-    """계획 수립 중 이벤트"""
-    message: str = "작업 계획 수립 중..."
-
-    def to_display(self) -> str:
-        return f"📋 *{self.message}*"
-
-    def to_dict(self) -> Dict:
-        d = super().to_dict()
-        d["message"] = self.message
-        return d
-
-
 @dataclass
 class PlanPromptEvent(ExecutionEvent):
     """계획 생성 프롬프트 정보 이벤트"""
@@ -123,10 +104,7 @@ class PlanReadyEvent(ExecutionEvent):
     plan_content: str
 
     def to_display(self) -> str:
-        output = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        output += "📋 **실행 계획**\n"
-        output += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        output += f"{self.plan_content}\n"
+        output = f"{self.plan_content}\n"
         return output
 
     def to_dict(self) -> Dict:
@@ -145,7 +123,7 @@ class ThinkingEvent(ExecutionEvent):
     message: str
 
     def to_display(self) -> str:
-        return f"\n💭 *{self.message}*"
+        return f"💭 *{self.message}*"
 
     def to_dict(self) -> Dict:
         d = super().to_dict()
