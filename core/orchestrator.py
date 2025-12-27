@@ -854,8 +854,7 @@ Create an execution plan. Respond with JSON only."""
                 tool_name=tool_call.name,
                 action=tool_call.action,
                 result=result.output if result.success else result.error,
-                success=result.success,
-                prompt_info=step_prompt_event
+                success=result.success
             )
 
             if self.on_step_complete:
