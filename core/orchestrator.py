@@ -1273,9 +1273,10 @@ Based on the above results, provide a final answer to the user's query."""
     # =========================================================================
     
     def _call_llm_api(self, system_prompt: str, user_prompt: str) -> str:
-        """Ollama Chat API 호출"""
+        """Ollama Chat API 호출 (with performance logging)"""
         try:
             import requests
+            import time
 
             url = f"{self.llm_config.base_url}/api/chat"
 
@@ -1296,10 +1297,47 @@ Based on the above results, provide a final answer to the user's query."""
                 }
             }
 
+            # Measure performance
+            start_time = time.time()
             response = requests.post(url, json=payload, timeout=self.llm_config.timeout)
             response.raise_for_status()
+            elapsed_time = time.time() - start_time
 
             data = response.json()
+
+            # Extract performance metrics from Ollama response
+            # Ollama provides: eval_count (output tokens), prompt_eval_count (input tokens),
+            # eval_duration (ns), prompt_eval_duration (ns)
+            prompt_tokens = data.get("prompt_eval_count", 0)
+            output_tokens = data.get("eval_count", 0)
+            total_duration_ns = data.get("total_duration", 0)
+            eval_duration_ns = data.get("eval_duration", 0)
+
+            # Calculate metrics
+            prompt_length = len(system_prompt) + len(user_prompt)  # Character count
+            response_length = len(data.get("message", {}).get("content", ""))  # Character count
+
+            # Tokens per second (based on eval_duration for output tokens)
+            tokens_per_sec = 0
+            if eval_duration_ns > 0:
+                tokens_per_sec = (output_tokens / eval_duration_ns) * 1e9  # Convert ns to seconds
+
+            # TTFT approximation (prompt eval duration)
+            ttft_ms = data.get("prompt_eval_duration", 0) / 1e6  # Convert ns to ms
+
+            # Log performance metrics
+            self.logger.info("LLM Performance Metrics", {
+                "elapsed_time_sec": round(elapsed_time, 2),
+                "prompt_tokens": prompt_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": prompt_tokens + output_tokens,
+                "tokens_per_sec": round(tokens_per_sec, 2),
+                "ttft_ms": round(ttft_ms, 2),
+                "prompt_chars": prompt_length,
+                "response_chars": response_length,
+                "model": self.llm_config.model
+            })
+
             # Chat API 응답 형식: message.content
             return data.get("message", {}).get("content", "")
 

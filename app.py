@@ -156,18 +156,19 @@ def get_app_state() -> AppState:
 # Chat Functions (Updated - Real-time Streaming with ExecutionEvents)
 # =============================================================================
 
-def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None, None]:
+def chat_stream(message: str, history: List[Dict]) -> Generator[tuple, None, None]:
     """
     채팅 메시지 처리 (Real-time Streaming)
 
     각 ExecutionEvent의 to_display() 메서드를 사용하여 실시간으로 표시합니다.
+    Returns: (history, send_btn_update, stop_btn_update, file_list_html_update)
     """
     state = get_app_state()
 
     state.orchestrator._stopped = False
 
     if not message.strip():
-        yield history, gr.update(interactive=False), gr.update(interactive=True)
+        yield history, gr.update(interactive=False), gr.update(interactive=True), gr.update()
         return
 
     # 파일 목록을 context로 준비 (orchestrator에 전달)
@@ -183,7 +184,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
     was_stopped = False
 
     # 초기 상태 표시
-    yield history, gr.update(interactive=False), gr.update(interactive=True)
+    yield history, gr.update(interactive=False), gr.update(interactive=True), gr.update()
 
     try:
         for event in state.orchestrator.run_stream(message, files_context):
@@ -207,10 +208,16 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
             # 최종 응답 업데이트
             response = "\n".join(accumulated_output)
 
+            # file_tool의 write/delete 완료 시 workspace UI 업데이트
+            file_list_update = gr.update()
+            if isinstance(event, ToolResultEvent):
+                if event.tool_name == "file_tool" and event.action in ["write", "delete"] and event.success:
+                    file_list_update = gr.update(value=get_file_list_html())
+
             # FinalAnswerEvent나 ErrorEvent가 오면 종료 처리
             if isinstance(event, (FinalAnswerEvent, ErrorEvent)):
                 history[-1] = {"role": "assistant", "content": response}
-                yield history, gr.update(interactive=True), gr.update(interactive=False)
+                yield history, gr.update(interactive=True), gr.update(interactive=False), file_list_update
                 break
             else:
                 # 중간 진행 상황 업데이트
@@ -218,15 +225,15 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
                     history[-1] = {"role": "assistant", "content": response}
                 else:
                     history = history + [{"role": "assistant", "content": response}]
-                yield history, gr.update(interactive=False), gr.update(interactive=True)
+                yield history, gr.update(interactive=False), gr.update(interactive=True), file_list_update
 
         # ===== 중지된 경우 메시지 표시 =====
         if was_stopped:
             accumulated_output.append("\n⏹️ **중지됨**")
             response = "\n".join(accumulated_output)
             history[-1] = {"role": "assistant", "content": response}
-            yield history, gr.update(interactive=True), gr.update(interactive=False)
-    
+            yield history, gr.update(interactive=True), gr.update(interactive=False), gr.update()
+
     except GeneratorExit:
         # Gradio가 generator를 중단할 때
         state.orchestrator._stopped = True
@@ -234,19 +241,19 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[List[Dict], None
         response = "\n".join(accumulated_output)
         if len(history) > 0 and history[-1]["role"] == "assistant":
             history[-1]["content"] = response
-        yield history, gr.update(interactive=True), gr.update(interactive=False)
+        yield history, gr.update(interactive=True), gr.update(interactive=False), gr.update()
 
     except Exception as e:
         accumulated_output.append(f"\n❌ **예외 발생**\n\n{str(e)}")
         response = "\n".join(accumulated_output)
         if len(history) > 0 and history[-1]["role"] == "assistant":
             history[-1]["content"] = response
-        yield history, gr.update(interactive=True), gr.update(interactive=False)
-    
+        yield history, gr.update(interactive=True), gr.update(interactive=False), gr.update()
+
     finally:
         # 세션 정리
         state.orchestrator._stopped = False
-    
+
     state.chat_history = history
 
 
@@ -427,61 +434,6 @@ def refresh_file_list():
 
 
 # =============================================================================
-# SharedStorage Functions
-# =============================================================================
-
-def get_shared_storage_tree() -> str:
-    state = get_app_state()
-    storage = state.storage
-    
-    html = "<div style='font-family: monospace; font-size: 13px;'>"
-    
-    current_context = storage.get_current_context()
-    html += "<details open><summary><b>📁 Context</b></summary>"
-    html += "<div style='margin-left: 20px;'>"
-
-    if current_context:
-        user_query = current_context.user_query
-        if user_query and len(user_query) > 50:
-            user_query = user_query[:50] + "..."
-        html += f"<div>user_query: <code>{user_query}</code></div>"
-        html += f"<div>session_id: <code>{current_context.session_id}</code></div>"
-    else:
-        html += "<div style='color: gray;'>세션 없음</div>"
-    
-    html += "</div></details>"
-    
-    results = storage.get_results()
-    html += f"<details open><summary><b>📁 Results ({len(results)})</b></summary>"
-    html += "<div style='margin-left: 20px;'>"
-    
-    if not results:
-        html += "<div style='color: gray;'>결과 없음</div>"
-    else:
-        for i, r in enumerate(results):
-            status_icon = "✅" if r.get("success", False) else "❌"
-            tool = r.get("executor", "unknown")
-            action = r.get("action", "unknown")
-            output_preview = str(r.get("output", ""))
-            
-            html += f"<details><summary>{status_icon} Step {i+1}: {tool}.{action}</summary>"
-            html += f"<div style='margin-left: 20px; background: #f5f5f5; padding: 8px; border-radius: 4px;'>"
-            html += f"<pre style='white-space: pre-wrap; margin: 0;'>{output_preview}</pre>"
-            html += "</div></details>"
-    
-    html += "</div></details>"
-    html += "</div>"
-
-    return html
-
-
-def refresh_shared_storage() -> str:
-    return get_shared_storage_tree()
-
-
-
-
-# =============================================================================
 # Build UI
 # =============================================================================
 
@@ -498,12 +450,10 @@ def create_ui() -> gr.Blocks:
     state = get_app_state()
     
     with gr.Blocks(title="Multi-Agent Chatbot") as app:
-        
+
         # Header
-        with gr.Row():
-            gr.Markdown("# 🤖 Multi-Agent Chatbot")
-            settings_btn = gr.Button("⚙️ Settings", scale=1, variant="secondary")
-        
+        gr.Markdown("# 🤖 Multi-Agent Chatbot")
+
         # Settings Modal
         with gr.Column(visible=False, elem_classes=["settings-modal"]) as settings_modal:
             gr.Markdown("## ⚙️ LLM Settings")
@@ -567,6 +517,7 @@ def create_ui() -> gr.Blocks:
                 send_btn = gr.Button("▶️전송", variant="primary", scale=1, interactive=True)
                 stop_btn = gr.Button("⏹️중지", variant="stop", scale=1, interactive=False)
                 clear_btn = gr.Button("🗑️삭제", scale=1)
+                settings_btn = gr.Button("⚙️ Settings", scale=1, variant="secondary")
         
         gr.Markdown("---")
         
@@ -591,10 +542,6 @@ def create_ui() -> gr.Blocks:
                 
                 file_status = gr.Markdown("")
             
-            # SharedStorage Tab
-            with gr.TabItem("💾 SharedStorage"):
-                storage_tree = gr.HTML(get_shared_storage_tree())
-                refresh_storage_btn = gr.Button("🔄 새로고침", size="sm")
         
         # =================================================================
         # Event Handlers
@@ -626,40 +573,41 @@ def create_ui() -> gr.Blocks:
 
             First yield: clears input field immediately
             Subsequent yields: stream from chat_stream
+            Returns: (chatbot, send_btn, stop_btn, msg_input, file_list_html)
             """
             # First yield to clear input immediately
-            yield history, gr.update(interactive=False), gr.update(interactive=True), ""
+            yield history, gr.update(interactive=False), gr.update(interactive=True), "", gr.update()
 
             # Then stream the actual chat
-            for chatbot_update, send_update, stop_update in chat_stream(message, history):
-                yield chatbot_update, send_update, stop_update, ""
+            for chatbot_update, send_update, stop_update, file_list_update in chat_stream(message, history):
+                yield chatbot_update, send_update, stop_update, "", file_list_update
 
         def on_chat_complete():
-            return get_shared_storage_tree(), gr.update(interactive=True), gr.update(interactive=False)
-        
+            return gr.update(interactive=True), gr.update(interactive=False)
+
         msg_input.submit(
             fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn, msg_input]
+            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html]
         ).then(
             fn=on_chat_complete,
-            outputs=[storage_tree, send_btn, stop_btn]
+            outputs=[send_btn, stop_btn]
         )
-        
+
         send_btn.click(
             fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn, msg_input]
+            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html]
         ).then(
             fn=on_chat_complete,
-            outputs=[storage_tree, send_btn, stop_btn]
+            outputs=[send_btn, stop_btn]
         )
-        
+
         stop_btn.click(fn=stop_generation)
-        
+
         clear_btn.click(fn=clear_chat, outputs=[chatbot]).then(
             fn=on_chat_complete,
-            outputs=[storage_tree, send_btn, stop_btn]
+            outputs=[send_btn, stop_btn]
         )
         
         # File management
@@ -685,18 +633,14 @@ def create_ui() -> gr.Blocks:
         
         refresh_files_btn.click(fn=refresh_file_list, outputs=[file_list_html, file_select])
 
-        # SharedStorage
-        refresh_storage_btn.click(fn=refresh_shared_storage, outputs=[storage_tree])
-        
         # Page Load
         def on_page_load():
             return (
                 get_file_list_html(),
-                gr.update(choices=get_file_choices()),
-                get_shared_storage_tree()
+                gr.update(choices=get_file_choices())
             )
 
-        app.load(fn=on_page_load, outputs=[file_list_html, file_select, storage_tree])
+        app.load(fn=on_page_load, outputs=[file_list_html, file_select])
 
     return app
 
