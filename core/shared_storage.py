@@ -210,7 +210,7 @@ class SharedStorage:
         Returns:
             Any: output 또는 None
         """
-        result = self.get_result_by_id(result_id)
+        result = self._all_results.get(result_id)
         if result:
             return result.output
         return None
