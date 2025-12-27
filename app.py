@@ -479,7 +479,7 @@ def create_ui() -> gr.Blocks:
                     allow_custom_value=True,
                     info="사용할 LLM 모델을 선택하세요. (예: gpt-3.5-turbo, llama-2-7b)"
                 )
-                timeout_slider = gr.Slider(30.0, 1800.0, 300, value=state.llm_config.timeout, label="Timeout",
+                timeout_slider = gr.Slider(10, 3600, 10, value=state.llm_config.timeout, label="Timeout",
                                            info="LLM 응답 타임아웃 값을 지정합니다.")
 
             with gr.Row():
@@ -507,7 +507,7 @@ def create_ui() -> gr.Blocks:
                                                      info="토큰의 빈도에 따라 페널티를 적용합니다. 높은 값은 자주 사용된 토큰의 재사용을 줄입니다.")
                 presence_penalty_slider = gr.Slider(0.0, 2.0, 0.1, value=state.llm_config.presence_penalty, label="Presence Penalty",
                                                     info="이미 등장한 토큰에 페널티를 적용합니다. 높은 값은 새로운 주제로의 전환을 촉진합니다.")
-                max_steps_slider = gr.Slider(10, 100, 50, value=state.llm_config.max_steps, label="Max Steps",
+                max_steps_slider = gr.Slider(10, 100, 1, value=state.llm_config.max_steps, label="Max Steps",
                                              info="하나의 요청에 대해서 최대 Step(도구 호출 횟수)을 제한 합니다. 값이 높을 수록 더 많은 도구들을 호출을 할 수 있지만, 그만큼 더 많은 시간이 소요 됩니다.")
 
             with gr.Row():
