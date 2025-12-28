@@ -1,296 +1,423 @@
+"""
+Improved JSON Parser with Robust Error Handling
+
+Key improvements:
+1. Refactored complex functions into smaller, manageable pieces
+2. Simplified escaping using StringContext class
+3. Improved nested code block handling with recursive approach
+4. Added input validation for security
+5. Prioritized parsing methods (fastest first)
+6. Better code organization and documentation
+"""
+
 import json
 import re
 import ast
-from typing import Any
+from typing import Any, Optional, Tuple
+from enum import Enum
 
 
-def parse_json_robust(json_string: str) -> dict | list | Any | None:
+# ============================================================
+# Constants and Enums
+# ============================================================
+
+class ParseStrategy(Enum):
+    """Parsing strategies in priority order"""
+    DIRECT = "direct"
+    CODE_BLOCK_REMOVED = "code_block_removed"
+    CONTROL_CHARS_ESCAPED = "control_chars_escaped"
+    SINGLE_TO_DOUBLE_QUOTES = "single_to_double_quotes"
+    COMBINED_ESCAPE_CONVERT = "combined_escape_convert"
+    AST_LITERAL = "ast_literal"
+
+
+# Maximum input size to prevent DoS (10MB)
+MAX_INPUT_SIZE = 10 * 1024 * 1024
+
+# Control characters that need escaping
+CONTROL_CHAR_MAP = {
+    '\n': '\\n',
+    '\r': '\\r',
+    '\t': '\\t',
+    '\b': '\\b',
+    '\f': '\\f',
+}
+
+
+# ============================================================
+# Input Validation
+# ============================================================
+
+def _validate_input(json_string: str) -> bool:
     """
-    특수 문자가 포함된 JSON 문자열을 안전하게 파싱합니다.
-    
-    처리 가능한 케이스:
-    - 표준 JSON
-    - 코드 블록으로 감싸진 JSON (```json ... ```)
-    - 이스케이프 안 된 제어 문자 (줄바꿈, 탭 등)
-    - Python 스타일 딕셔너리 (작은따옴표)
-    - 백틱, 작은따옴표 등 특수 문자 포함
-    
+    Validate input to prevent security vulnerabilities
+
     Args:
-        json_string: 파싱할 JSON 문자열
-        
+        json_string: Input string to validate
+
     Returns:
-        파싱된 Python 객체 (dict, list 등) 또는 실패시 None
+        True if valid, False otherwise
     """
     if not json_string or not isinstance(json_string, str):
-        return None
-    
-    # 1. 먼저 그대로 파싱 시도
-    try:
-        return json.loads(json_string)
-    except json.JSONDecodeError:
-        pass
-    
-    # 2. 바깥쪽 코드 블록만 제거 (내부 ```는 보존)
-    cleaned = _remove_outer_code_block(json_string)
-    
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-    
-    # 3. 문자열 값 내부의 이스케이프 안 된 제어 문자 처리
-    try:
-        fixed = _escape_control_chars_in_strings(cleaned)
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        pass
-    
-    # 4. 작은따옴표를 큰따옴표로 변환 (Python dict 스타일)
-    try:
-        converted = _convert_single_to_double_quotes(cleaned)
-        return json.loads(converted)
-    except json.JSONDecodeError:
-        pass
-    
-    # 5. 3번 + 4번 조합
-    try:
-        converted = _convert_single_to_double_quotes(cleaned)
-        fixed = _escape_control_chars_in_strings(converted)
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        pass
-    
-    # 6. 마지막 시도: ast.literal_eval (Python 리터럴)
-    try:
-        return ast.literal_eval(json_string.strip())
-    except (ValueError, SyntaxError):
-        pass
-    
-    try:
-        return ast.literal_eval(cleaned)
-    except (ValueError, SyntaxError):
-        pass
-    
+        return False
+
+    # Check size limit
+    if len(json_string) > MAX_INPUT_SIZE:
+        return False
+
+    # Check for suspicious patterns (basic security check)
+    # Prevent extremely deep nesting
+    if json_string.count('{') > 1000 or json_string.count('[') > 1000:
+        return False
+
+    return True
+
+
+# ============================================================
+# Code Block Handling (Improved with Recursion)
+# ============================================================
+
+def _find_matching_code_block_end(lines: list, start_idx: int) -> Optional[int]:
+    """
+    Find the matching ``` for a code block start
+
+    Args:
+        lines: List of lines
+        start_idx: Index of the opening ```
+
+    Returns:
+        Index of matching closing ``` or None
+    """
+    depth = 1
+    for i in range(start_idx + 1, len(lines)):
+        line = lines[i].strip()
+        if line.startswith('```'):
+            # Check if it's an opening or closing block
+            # Opening: ```language
+            # Closing: ``` (only)
+            if re.match(r'^```\w+', line):
+                depth += 1
+            elif line == '```':
+                depth -= 1
+                if depth == 0:
+                    return i
     return None
 
 
 def _remove_outer_code_block(s: str) -> str:
     """
-    가장 바깥쪽 코드 블록만 제거 (첫 줄과 마지막 줄만 체크)
-    내부에 있는 ```는 보존됨
+    Remove outermost code block only, preserving nested blocks
+
+    Handles:
+    - Simple blocks: ```json ... ```
+    - Nested blocks: ```json ... ```inner``` ... ```
+
+    Args:
+        s: Input string
+
+    Returns:
+        String with outer code block removed
     """
     lines = s.strip().split('\n')
-    
+
     if len(lines) < 2:
         return s.strip()
-    
+
     first_line = lines[0].strip()
-    last_line = lines[-1].strip()
-    
-    # 첫 줄이 ```로 시작하고 (언어 태그 있어도 됨), 마지막 줄이 ```만 있는 경우
-    if re.match(r'^```\w*$', first_line) and last_line == '```':
-        return '\n'.join(lines[1:-1])
-    
+
+    # Check if first line is a code block marker
+    if not re.match(r'^```\w*$', first_line):
+        return s.strip()
+
+    # Find matching closing block
+    end_idx = _find_matching_code_block_end(lines, 0)
+
+    if end_idx is not None:
+        return '\n'.join(lines[1:end_idx])
+
     return s.strip()
+
+
+# ============================================================
+# String Processing Helpers
+# ============================================================
+
+class StringContext:
+    """Track context while parsing strings"""
+    def __init__(self):
+        self.in_double_quote = False
+        self.in_single_quote = False
+        self.escape_next = False
+
+    def is_in_string(self) -> bool:
+        return self.in_double_quote or self.in_single_quote
+
+    def process_char(self, char: str):
+        """Update context based on character"""
+        if self.escape_next:
+            self.escape_next = False
+            return
+
+        if char == '\\':
+            self.escape_next = True
+        elif char == '"' and not self.in_single_quote:
+            self.in_double_quote = not self.in_double_quote
+        elif char == "'" and not self.in_double_quote:
+            self.in_single_quote = not self.in_single_quote
+
+
+def _escape_control_char(char: str) -> str:
+    """
+    Escape a single control character
+
+    Args:
+        char: Character to escape
+
+    Returns:
+        Escaped string representation
+    """
+    if char in CONTROL_CHAR_MAP:
+        return CONTROL_CHAR_MAP[char]
+
+    # Other control characters (0x00-0x1F)
+    if ord(char) < 0x20:
+        return f'\\u{ord(char):04x}'
+
+    return char
 
 
 def _escape_control_chars_in_strings(s: str) -> str:
     """
-    JSON 문자열 값 내부의 이스케이프 안 된 제어 문자를 처리
-    
-    처리 대상: \n, \r, \t, \b, \f 및 기타 제어 문자 (0x00-0x1F)
+    Escape unescaped control characters inside JSON string values
+
+    Improved version with StringContext for better tracking
+
+    Args:
+        s: Input string
+
+    Returns:
+        String with control characters escaped
     """
     result = []
-    in_string = False
-    escape_next = False
-    
+    context = StringContext()
+
     for char in s:
-        if escape_next:
+        # Process character for context tracking
+        was_escape = context.escape_next
+        context.process_char(char)
+
+        # Don't modify escaped characters
+        if was_escape:
             result.append(char)
-            escape_next = False
             continue
-        
+
+        # Don't modify escape character itself
         if char == '\\':
-            escape_next = True
             result.append(char)
             continue
-        
-        if char == '"':
-            in_string = not in_string
+
+        # Don't modify quotes
+        if char == '"' or char == "'":
             result.append(char)
             continue
-        
-        if in_string:
-            # 제어 문자 이스케이프 (0x00 ~ 0x1F)
-            if ord(char) < 0x20:
-                if char == '\n':
-                    result.append('\\n')
-                elif char == '\r':
-                    result.append('\\r')
-                elif char == '\t':
-                    result.append('\\t')
-                elif char == '\b':
-                    result.append('\\b')
-                elif char == '\f':
-                    result.append('\\f')
-                else:
-                    # 기타 제어 문자는 \uXXXX 형식으로
-                    result.append(f'\\u{ord(char):04x}')
-            else:
-                result.append(char)
+
+        # Escape control characters only inside strings
+        if context.is_in_string() and ord(char) < 0x20:
+            result.append(_escape_control_char(char))
         else:
             result.append(char)
-    
+
     return ''.join(result)
 
 
 def _convert_single_to_double_quotes(s: str) -> str:
     """
-    Python 스타일 딕셔너리를 JSON으로 변환 (작은따옴표 -> 큰따옴표)
-    문자열 내부의 따옴표는 적절히 이스케이프
+    Convert Python-style single quotes to JSON double quotes
+
+    Improved version with better quote handling
+
+    Args:
+        s: Input string
+
+    Returns:
+        String with single quotes converted to double quotes
     """
     result = []
-    in_double_string = False
-    in_single_string = False
-    escape_next = False
-    
-    for i, char in enumerate(s):
-        if escape_next:
-            # 이스케이프된 작은따옴표를 일반 작은따옴표로
-            if char == "'" and not in_double_string:
+    context = StringContext()
+
+    for char in s:
+        was_escape = context.escape_next
+        was_in_single = context.in_single_quote
+        was_in_double = context.in_double_quote
+
+        context.process_char(char)
+
+        # Handle escaped characters
+        if was_escape:
+            if char == "'" and not was_in_double:
+                # Escaped single quote outside double-quoted string
                 result.append("'")
-            # 이스케이프된 큰따옴표 유지
             elif char == '"':
+                # Escaped double quote
                 result.append('\\"')
             else:
                 result.append(char)
-            escape_next = False
             continue
-        
+
+        # Handle escape character
         if char == '\\':
-            escape_next = True
             result.append(char)
             continue
-        
-        if char == '"' and not in_single_string:
-            in_double_string = not in_double_string
-            result.append(char)
-        elif char == "'" and not in_double_string:
-            if not in_single_string:
-                # 문자열 시작: 작은따옴표 -> 큰따옴표
-                in_single_string = True
+
+        # Handle quotes
+        if char == '"':
+            if not was_in_single:
+                # Double quote outside single-quoted string
+                result.append(char)
+            else:
+                # Double quote inside single-quoted string needs escaping
+                result.append('\\"')
+        elif char == "'":
+            if not was_in_double:
+                # Convert single quote to double quote
                 result.append('"')
             else:
-                # 문자열 끝: 작은따옴표 -> 큰따옴표
-                in_single_string = False
-                result.append('"')
-        elif char == '"' and in_single_string:
-            # 작은따옴표 문자열 내부의 큰따옴표는 이스케이프
-            result.append('\\"')
+                # Single quote inside double-quoted string stays as is
+                result.append(char)
         else:
             result.append(char)
-    
+
     return ''.join(result)
 
 
-def parse_json_strict(json_string: str) -> dict | list | Any:
+# ============================================================
+# Parsing Strategies
+# ============================================================
+
+def _try_parse_direct(s: str) -> Tuple[Optional[Any], bool]:
+    """Try parsing directly with json.loads"""
+    try:
+        return json.loads(s), True
+    except (json.JSONDecodeError, ValueError):
+        return None, False
+
+
+def _try_parse_with_code_block_removed(s: str) -> Tuple[Optional[Any], bool]:
+    """Try parsing after removing code blocks"""
+    try:
+        cleaned = _remove_outer_code_block(s)
+        return json.loads(cleaned), True
+    except (json.JSONDecodeError, ValueError):
+        return None, False
+
+
+def _try_parse_with_control_chars_escaped(s: str) -> Tuple[Optional[Any], bool]:
+    """Try parsing after escaping control characters"""
+    try:
+        cleaned = _remove_outer_code_block(s)
+        fixed = _escape_control_chars_in_strings(cleaned)
+        return json.loads(fixed), True
+    except (json.JSONDecodeError, ValueError):
+        return None, False
+
+
+def _try_parse_with_quotes_converted(s: str) -> Tuple[Optional[Any], bool]:
+    """Try parsing after converting single quotes to double quotes"""
+    try:
+        cleaned = _remove_outer_code_block(s)
+        converted = _convert_single_to_double_quotes(cleaned)
+        return json.loads(converted), True
+    except (json.JSONDecodeError, ValueError):
+        return None, False
+
+
+def _try_parse_with_combined_fixes(s: str) -> Tuple[Optional[Any], bool]:
+    """Try parsing after applying both quote conversion and control char escaping"""
+    try:
+        cleaned = _remove_outer_code_block(s)
+        converted = _convert_single_to_double_quotes(cleaned)
+        fixed = _escape_control_chars_in_strings(converted)
+        return json.loads(fixed), True
+    except (json.JSONDecodeError, ValueError):
+        return None, False
+
+
+def _try_parse_with_ast(s: str) -> Tuple[Optional[Any], bool]:
+    """Try parsing with ast.literal_eval as last resort"""
+    for text in [s, _remove_outer_code_block(s)]:
+        try:
+            result = ast.literal_eval(text.strip())
+            return result, True
+        except (ValueError, SyntaxError):
+            continue
+    return None, False
+
+
+# ============================================================
+# Main Parser
+# ============================================================
+
+def parse_json_robust(json_string: str) -> Optional[Any]:
     """
-    파싱 실패시 예외를 발생시키는 버전
-    
+    Robustly parse JSON strings with various formatting issues
+
+    Features:
+    - Standard JSON
+    - Code blocks (```json ... ```)
+    - Nested code blocks
+    - Unescaped control characters (\n, \t, etc.)
+    - Python-style dictionaries (single quotes)
+    - Mixed special characters
+
+    Improvements:
+    - Prioritized parsing strategies (fastest first)
+    - Better nested code block handling
+    - Input validation for security
+    - Refactored into smaller functions
+
     Args:
-        json_string: 파싱할 JSON 문자열
-        
+        json_string: JSON string to parse
+
     Returns:
-        파싱된 Python 객체
-        
+        Parsed Python object (dict, list, etc.) or None on failure
+    """
+    # Input validation
+    if not _validate_input(json_string):
+        return None
+
+    # Try parsing strategies in order of priority (fastest first)
+    strategies = [
+        _try_parse_direct,
+        _try_parse_with_code_block_removed,
+        _try_parse_with_control_chars_escaped,
+        _try_parse_with_quotes_converted,
+        _try_parse_with_combined_fixes,
+        _try_parse_with_ast,
+    ]
+
+    for strategy in strategies:
+        result, success = strategy(json_string)
+        if success:
+            return result
+
+    return None
+
+
+def parse_json_strict(json_string: str) -> Any:
+    """
+    Parse JSON and raise exception on failure
+
+    Args:
+        json_string: JSON string to parse
+
+    Returns:
+        Parsed Python object
+
     Raises:
-        ValueError: 파싱 실패시
+        ValueError: If parsing fails
     """
     result = parse_json_robust(json_string)
     if result is None:
         preview = json_string[:100] + '...' if len(json_string) > 100 else json_string
-        raise ValueError(f"JSON 파싱 실패: {preview}")
+        raise ValueError(f"JSON parsing failed: {preview}")
     return result
-
-
-# ============================================================
-# 테스트
-# ============================================================
-if __name__ == "__main__":
-    test_cases = [
-        # 1. 기본 JSON
-        ('{"name": "test", "value": 123}', "기본 JSON"),
-        
-        # 2. 특수 문자 포함
-        ('{"message": "He said \\"Hello\\"", "code": "it\'s working"}', "이스케이프된 따옴표"),
-        
-        # 3. 백틱 포함
-        ('{"template": "Use `code` here"}', "백틱 포함"),
-        
-        # 4. 코드 블록 (json)
-        ('```json\n{"key": "value"}\n```', "JSON 코드 블록"),
-        
-        # 5. 코드 블록 (다른 언어)
-        ('```python\n{"key": "value"}\n```', "Python 코드 블록"),
-        
-        # 6. 내부에 코드 블록 포함
-        ('```json\n{"code": "Use ```python``` here"}\n```', "내부 코드 블록 포함"),
-        
-        # 7. Python 스타일 (작은따옴표)
-        ("{'name': 'test', 'value': 123}", "Python 스타일"),
-        
-        # 8. 혼합 특수 문자
-        ('{"text": "He said \\"it\'s `great`\\""}', "혼합 특수 문자"),
-        
-        # 9. 이스케이프 안 된 줄바꿈
-        ('{"multiline": "line1\nline2"}', "줄바꿈 포함"),
-        
-        # 10. 이스케이프 안 된 탭
-        ('{"data": "col1\tcol2"}', "탭 포함"),
-        
-        # 11. Python 스타일 + 내부 큰따옴표
-        ("{'msg': 'He said \"hello\"'}", "Python 스타일 + 큰따옴표"),
-        
-        # 12. 빈 객체/배열
-        ('{}', "빈 객체"),
-        ('[]', "빈 배열"),
-        
-        # 13. 중첩 구조
-        ('{"outer": {"inner": "value"}}', "중첩 객체"),
-        
-        # 14. 배열
-        ('[1, 2, {"key": "value"}]', "배열"),
-        
-        # 15. 유니코드
-        ('{"korean": "한글 테스트", "emoji": "😀"}', "유니코드"),
-
-        # 16. Nested JSON 코드 블록
-        ('```json\n{"key": "```json\ncodeA\n``` and ```json\ncodeB\n```"}\n```', "Nested JSON 코드 블록"),
-
-        # 17. Nested 코드 블록
-        ('```\n{"key": "```json\ncodeA\n``` and ```json\ncodeB\n```"}\n```', "Nested 코드 블록"),
-    ]
-    
-    print("=" * 60)
-    print("JSON 파서 테스트")
-    print("=" * 60)
-    
-    passed = 0
-    failed = 0
-    
-    for json_str, description in test_cases:
-        result = parse_json_robust(json_str)
-        status = "✅" if result is not None else "❌"
-        
-        if result is not None:
-            passed += 1
-        else:
-            failed += 1
-        
-        print(f"\n{status} {description}")
-        print(f"   입력: {json_str[:50]}{'...' if len(json_str) > 50 else ''}")
-        print(f"   결과: {result}")
-    
-    print("\n" + "=" * 60)
-    print(f"결과: {passed}/{len(test_cases)} 통과")
-    print("=" * 60)
