@@ -447,13 +447,6 @@ def refresh_file_list():
 def create_ui() -> gr.Blocks:
     """Gradio UI 생성"""
 
-    def show_toast(message):
-        """Gradio toast 메시지를 표시하는 JavaScript 함수."""
-        js_code = f"""
-        gradioApp().showToast("{message}");
-        """
-        return js_code
-
     state = get_app_state()
     
     with gr.Blocks(title="Multi-Agent Chatbot") as app:
@@ -606,7 +599,8 @@ def create_ui() -> gr.Blocks:
         msg_input.submit(
             fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html]
+            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html],
+            concurrency_limit=1
         ).then(
             fn=on_chat_complete,
             outputs=[send_btn, stop_btn]
@@ -615,7 +609,8 @@ def create_ui() -> gr.Blocks:
         send_btn.click(
             fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html]
+            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html],
+            concurrency_limit=1
         ).then(
             fn=on_chat_complete,
             outputs=[send_btn, stop_btn]
@@ -673,6 +668,7 @@ def main():
     print("=" * 60)
     
     app = create_ui()
+    app.queue()
     app.launch(
         server_name="localhost",
         server_port=7860,
