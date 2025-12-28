@@ -12,39 +12,71 @@ from datetime import datetime
 from typing import Dict, Optional
 from core.json_parser import parse_json_strict
 
+def truncate_text(text: str, max_length: int = 100, max_lines: int = 3) -> tuple[str, bool]:
+    """
+    텍스트를 안전한 길이로 truncate
+
+    Args:
+        text: truncate할 텍스트
+        max_length: 최대 문자 수 (기본값: 100)
+        max_lines: 최대 줄 수 (기본값: 3)
+
+    Returns:
+        tuple: (truncated_text, was_truncated)
+    """
+    if not text:
+        return text, False
+
+    was_truncated = False
+    result = text
+
+    # 줄 수 제한
+    lines = text.split('\n')
+    if len(lines) > max_lines:
+        result = '\n'.join(lines[:max_lines])
+        was_truncated = True
+
+    # 문자 수 제한
+    if len(result) > max_length:
+        result = result[:max_length]
+        was_truncated = True
+
+    return result, was_truncated
+
+
 def extract_fenced_code(text: str) -> Optional[str]:
     """
     Fenced 코드 블록에서 코드 내용만 추출
-    
+
     Args:
         text: 입력 문자열
-        
+
     Returns:
         Fenced 코드 블록이면 코드 내용, 아니면 None
     """
     stripped = text.strip()
-    
+
     # Fenced 코드 블록 패턴 체크 (```로 시작하고 끝나는지)
     if not (stripped.startswith('```') and stripped.endswith('```')):
         return None
-    
+
     lines = stripped.split('\n')
-    
+
     # 최소 3줄 필요 (시작```, 코드, 끝```)
     if len(lines) < 2:
         return None
-    
+
     # 첫 줄이 ```로 시작하는지 확인 (언어 태그 포함 가능)
     if not re.match(r'^```\w*\s*$', lines[0]):
         return None
-    
+
     # 마지막 줄이 ```인지 확인
     if lines[-1].strip() != '```':
         return None
-    
+
     # 첫 줄과 마지막 줄 제외한 내용 반환
     code_content = '\n'.join(lines[1:-1])
-    
+
     return code_content
 # =============================================================================
 # Base Class
@@ -206,18 +238,23 @@ class ToolResultEvent(ExecutionEvent):
     success: bool = True
 
     def to_display(self) -> str:
+        # 결과를 안전한 길이로 truncate
+        truncated_result, was_truncated = truncate_text(self.result)
+        truncation_notice = "\n... (truncated)" if was_truncated else ""
+
         # 결과
         status_emoji = "✅" if self.success else "❌"
         summary = f"Output: {status_emoji} {'완료' if self.success else '실패'}"
         output = f"<details>\n<summary><b>{summary}</b></summary>\n\n"
-        markdown_code_block = extract_fenced_code(self.result)
+
+        markdown_code_block = extract_fenced_code(truncated_result)
         if markdown_code_block:
-            output += f"```\n{markdown_code_block}\n```\n</details>\n\n"
+            output += f"```\n{markdown_code_block}{truncation_notice}\n```\n</details>\n\n"
         else:
             try:
-                output += f"```\n{json.dumps(parse_json_strict(self.result), indent=2)}\n```\n</details>\n\n"
+                output += f"```\n{json.dumps(parse_json_strict(truncated_result), indent=2)}{truncation_notice}\n```\n</details>\n\n"
             except (ValueError):
-                output += f"```\n{self.result}\n```\n</details>\n\n"
+                output += f"```\n{truncated_result}{truncation_notice}\n```\n</details>\n\n"
 
         return output
 
