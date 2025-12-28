@@ -230,8 +230,6 @@ class ToolResultEvent(ExecutionEvent):
             "result": self.result,
             "success": self.success
         })
-        if self.prompt_info:
-            d["prompt_info"] = self.prompt_info.to_dict()
         return d
 
 
