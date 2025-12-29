@@ -539,9 +539,11 @@ def create_ui() -> gr.Blocks:
             
             # Workspace Files Tab
             with gr.TabItem("📁 Workspace Files"):
-                with gr.Row():
-                    file_upload = gr.File(label="파일 업로드", file_count="multiple", file_types=None)
-                    upload_btn = gr.Button("📤 업로드", size="sm")
+                file_upload = gr.File(
+                    label="파일을 드래그하거나 클릭하여 업로드",
+                    file_count="multiple",
+                    file_types=None
+                )
 
                 with gr.Row():
                     delete_all_btn = gr.Button("🗑️ 전체 삭제", size="sm", variant="stop")
@@ -653,10 +655,14 @@ def create_ui() -> gr.Blocks:
         )
         
         # File management
-        upload_btn.click(
+        # 파일이 업로드되면 자동으로 처리하고 파일 선택 창 초기화
+        file_upload.upload(
             fn=upload_files,
             inputs=[file_upload],
             outputs=[files_state, file_status]
+        ).then(
+            fn=lambda: None,
+            outputs=[file_upload]
         )
 
         delete_all_btn.click(
