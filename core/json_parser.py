@@ -7,17 +7,18 @@ from typing import Any
 def parse_json_robust(json_string: str) -> dict | list | Any | None:
     """
     특수 문자가 포함된 JSON 문자열을 안전하게 파싱합니다.
-    
+
     처리 가능한 케이스:
     - 표준 JSON
     - 코드 블록으로 감싸진 JSON (```json ... ```)
+    - Incomplete 코드 블록 (```json ... 으로 시작하고 끝이 없는 경우)
     - 이스케이프 안 된 제어 문자 (줄바꿈, 탭 등)
     - Python 스타일 딕셔너리 (작은따옴표)
     - 백틱, 작은따옴표 등 특수 문자 포함
-    
+
     Args:
         json_string: 파싱할 JSON 문자열
-        
+
     Returns:
         파싱된 Python 객체 (dict, list 등) 또는 실패시 None
     """
@@ -29,43 +30,46 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
         return json.loads(json_string)
     except json.JSONDecodeError:
         pass
-    
-    # 2. 바깥쪽 코드 블록만 제거 (내부 ```는 보존)
-    cleaned = _remove_outer_code_block(json_string)
+
+    # 2. Incomplete code block 처리 (```로 시작했는데 끝이 없는 경우 등)
+    sanitized = sanitize_code_blocks(json_string)
+
+    # 3. 바깥쪽 코드 블록만 제거 (내부 ```는 보존)
+    cleaned = _remove_outer_code_block(sanitized)
     
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
-    
-    # 3. 문자열 값 내부의 이스케이프 안 된 제어 문자 처리
+
+    # 4. 문자열 값 내부의 이스케이프 안 된 제어 문자 처리
     try:
         fixed = _escape_control_chars_in_strings(cleaned)
         return json.loads(fixed)
     except json.JSONDecodeError:
         pass
-    
-    # 4. 작은따옴표를 큰따옴표로 변환 (Python dict 스타일)
+
+    # 5. 작은따옴표를 큰따옴표로 변환 (Python dict 스타일)
     try:
         converted = _convert_single_to_double_quotes(cleaned)
         return json.loads(converted)
     except json.JSONDecodeError:
         pass
-    
-    # 5. 3번 + 4번 조합
+
+    # 6. 4번 + 5번 조합
     try:
         converted = _convert_single_to_double_quotes(cleaned)
         fixed = _escape_control_chars_in_strings(converted)
         return json.loads(fixed)
     except json.JSONDecodeError:
         pass
-    
-    # 6. 마지막 시도: ast.literal_eval (Python 리터럴)
+
+    # 7. 마지막 시도: ast.literal_eval (Python 리터럴)
     try:
         return ast.literal_eval(json_string.strip())
     except (ValueError, SyntaxError):
         pass
-    
+
     try:
         return ast.literal_eval(cleaned)
     except (ValueError, SyntaxError):
@@ -74,23 +78,71 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
     return None
 
 
+def sanitize_code_blocks(text: str) -> str:
+    """
+    코드블럭 마크다운의 sanity check (incomplete code block 처리)
+
+    - ``` 로 시작했는데 ``` 로 끝나지 않으면 마지막에 추가
+    - ``` 로 끝났는데 ``` 시작이 없으면 처음에 추가
+
+    Args:
+        text: 검사할 텍스트
+
+    Returns:
+        sanitized 텍스트
+    """
+    if not text:
+        return text
+
+    # 모든 ``` 패턴 찾기
+    patterns = list(re.finditer(r'```', text))
+
+    if not patterns:
+        return text
+
+    # 첫 번째와 마지막 ``` 위치
+    first_match = patterns[0]
+    last_match = patterns[-1]
+
+    result = text
+
+    # 첫 번째 ``` 앞에 텍스트가 있는지 확인 (앞에 공백/줄바꿈만 있으면 시작으로 간주)
+    before_first = text[:first_match.start()].strip()
+    has_content_before_first = len(before_first) > 0
+
+    # 마지막 ``` 뒤에 텍스트가 있는지 확인 (뒤에 공백/줄바꿈만 있으면 끝으로 간주)
+    after_last = text[last_match.end():].strip()
+    has_content_after_last = len(after_last) > 0
+
+    # ``` 개수가 홀수면 짝이 맞지 않음
+    if len(patterns) % 2 == 1:
+        # 첫 번째 앞에 내용이 없으면 시작 블록, 끝이 없으므로 추가
+        if not has_content_before_first:
+            result = result.rstrip() + "\n```\n"
+        # 첫 번째 앞에 내용이 있으면 끝 블록이 먼저 나온 것, 시작 추가
+        else:
+            result = "```\n" + result.lstrip()
+
+    return result
+
+
 def _remove_outer_code_block(s: str) -> str:
     """
     가장 바깥쪽 코드 블록만 제거 (첫 줄과 마지막 줄만 체크)
     내부에 있는 ```는 보존됨
     """
     lines = s.strip().split('\n')
-    
+
     if len(lines) < 2:
         return s.strip()
-    
+
     first_line = lines[0].strip()
     last_line = lines[-1].strip()
-    
+
     # 첫 줄이 ```로 시작하고 (언어 태그 있어도 됨), 마지막 줄이 ```만 있는 경우
     if re.match(r'^```\w*$', first_line) and last_line == '```':
         return '\n'.join(lines[1:-1])
-    
+
     return s.strip()
 
 
@@ -269,6 +321,12 @@ if __name__ == "__main__":
 
         # 17. Nested 코드 블록
         ('```\n{"key": "```json\ncodeA\n``` and ```json\ncodeB\n```"}\n```', "Nested 코드 블록"),
+
+        # 18. Incomplete 코드 블록 (json)
+        ('```json\n{"key": "value"}\n', "Incomplete JSON 코드 블록"),
+
+        # 19. Incomplete Nested 코드 블록
+        ('```\n{"key": "```json\ncodeA\n``` and ```json\ncodeB\n```"}\n', "Incomplete Nested 코드 블록"),
     ]
     
     print("=" * 60)

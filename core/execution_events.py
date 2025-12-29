@@ -11,8 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional
-from core.json_parser import parse_json_strict
-from .markdown_sanitizer import sanitize_code_blocks
+from core.json_parser import (parse_json_strict, sanitize_code_blocks)
 
 # =============================================================================
 # Base Class
