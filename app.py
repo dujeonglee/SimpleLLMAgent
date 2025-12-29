@@ -424,7 +424,7 @@ def get_file_list_html() -> str:
         file_display = f"""
         <details>
             <summary>{html.escape(f.name)}</summary>
-            <pre style='background:#f5f5f5; padding:8px; margin-top:4px; border-radius:4px; max-height:300px; overflow-y:auto;'>{content}</pre>
+            <pre style='background:#f5f5f5; padding:8px; margin-top:4px; border-radius:4px; max-height:300px; overflow-y:auto; white-space:pre-wrap; word-wrap:break-word; overflow-x:auto;'>{content}</pre>
         </details>
         """
 
