@@ -696,8 +696,8 @@ def main():
     app = create_ui()
     app.queue()
     app.launch(
-        server_name="localhost",
-        server_port=7860,
+        server_name="0.0.0.0",
+        server_port=1849,
         share=False,
         css ="""
             .chatbot .message {
