@@ -389,22 +389,49 @@ def upload_files(files):
 
 
 def get_file_list_html() -> str:
+    import html
     state = get_app_state()
     files = state.workspace_manager.list_files()
 
     if not files:
         return "<p style='color: gray;'>파일이 없습니다.</p>"
-    
-    html = "<table style='width:100%; border-collapse:collapse;'>"
-    html += "<tr style='background:#f0f0f0;'><th>이름</th><th>크기</th><th>출처</th></tr>"
-    
+
+    html_output = "<table style='width:100%; border-collapse:collapse;'>"
+    html_output += "<tr style='background:#f0f0f0;'><th>이름</th><th>크기</th><th>출처</th></tr>"
+
+    files_dir = os.path.join(state.workspace_path, "files")
+
     for f in files:
         size = f"{f.size / 1024:.1f}KB" if f.size >= 1024 else f"{f.size}B"
         source = "📤 업로드" if f.source == "upload" else "🤖 생성"
-        html += f"<tr><td>{f.name}</td><td>{size}</td><td>{source}</td></tr>"
-    
-    html += "</table>"
-    return html
+
+        # 파일 내용 읽기
+        file_path = os.path.join(files_dir, f.name)
+        content = ""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                content = html.escape(file.read())
+        except UnicodeDecodeError:
+            try:
+                with open(file_path, 'r', encoding='cp949') as file:
+                    content = html.escape(file.read())
+            except:
+                content = "[파일 내용을 읽을 수 없습니다 - 바이너리 파일일 수 있습니다]"
+        except Exception as e:
+            content = f"[오류 발생: {html.escape(str(e))}]"
+
+        # details/summary 태그로 파일 내용 포함
+        file_display = f"""
+        <details>
+            <summary>{html.escape(f.name)}</summary>
+            <pre style='background:#f5f5f5; padding:8px; margin-top:4px; border-radius:4px; max-height:300px; overflow-y:auto;'>{content}</pre>
+        </details>
+        """
+
+        html_output += f"<tr><td>{file_display}</td><td>{size}</td><td>{source}</td></tr>"
+
+    html_output += "</table>"
+    return html_output
 
 
 def get_file_choices() -> List[str]:
