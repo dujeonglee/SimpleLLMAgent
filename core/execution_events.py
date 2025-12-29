@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional
 from core.json_parser import parse_json_strict
+from .markdown_sanitizer import sanitize_code_blocks
 
 # =============================================================================
 # Base Class
@@ -173,7 +174,10 @@ class ToolResultEvent(ExecutionEvent):
         status_emoji = "✅" if self.success else "❌"
         summary = f"Output: {status_emoji} {'완료' if self.success else '실패'}"
         output = f"<details>\n<summary><b>{summary}</b></summary>\n\n"
-        output += f"{html.escape(self.result)}</details>\n\n"
+
+        # sanitize_code_blocks 적용 후 HTML escape
+        sanitized_result = sanitize_code_blocks(self.result)
+        output += f"{html.escape(sanitized_result)}</details>\n\n"
 
         return output
 
