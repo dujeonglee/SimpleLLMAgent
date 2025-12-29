@@ -657,87 +657,71 @@ Provide a direct answer. Respond with JSON only."""
 2. Create a step-by-step plan using available tools
 3. If plan cannot be created, provide direct answer explaining why
 
-## IMPORTANT: Plan Optimization
-**Minimize the number of steps - prefer direct parameter usage over intermediate steps.**
+## Reference System
+You can use references in parameter values:
 
-Good (1 step):
-- llm_tool.staticanalysis with file_path="example.py"
+**[FILE:path]** - Reference file content directly
+- Automatically replaced with file content from workspace/files/
+- Example: {{"content": "[FILE:example.py]"}} → file content is loaded
+- Use when: File content is needed but hasn't been read yet
 
-Bad (2 steps):
-- Step 1: file_tool.read to get content
-- Step 2: llm_tool.staticanalysis with content="[RESULT:Session0_1]"
+**[RESULT:session_step]** - Reference previous step output
+- Example: [RESULT:Session0_1] → output from Step 1 in Session0
+- Use when: Reusing output from earlier steps in the current plan
 
-Guidelines:
-- Check tool schemas for direct parameter support (file_path, content, etc.)
-- Only add intermediate steps when transformation/filtering is actually needed
-- Combine operations in a single step whenever possible
+## Plan Optimization
+**Minimize steps by using references ([FILE:*], [RESULT:*]) instead of intermediate operations.**
 
-## Data Flow Between Steps
-- Each step's output becomes available for the next step with a unique result key (session_id_step format)
-- Reference previous results using [RESULT:session_id_step] format in parameters
-- Example: Session0 Step 1 output → [RESULT:Session0_1], Step 2 output → [RESULT:Session0_2]
+Good (1 step with FILE reference):
+{{
+    "step": 1,
+    "tool_name": "llm_tool",
+    "action": "staticanalysis",
+    "params_hint": {{"content": "[FILE:example.py]"}}
+}}
+
+Bad (2 steps - unnecessary read step):
+{{
+    "step": 1,
+    "tool_name": "file_tool",
+    "action": "read",
+    "params_hint": {{"read_path": "example.py"}}
+}},
+{{
+    "step": 2,
+    "tool_name": "llm_tool",
+    "action": "staticanalysis",
+    "params_hint": {{"content": "[RESULT:Session0_1]"}}
+}}
 
 ## Response Format (JSON only)
 
 If tools are needed:
 {{
-    "thought": "Analysis of what needs to be done",
+    "thought": "Brief analysis",
     "plan": [
         {{
             "step": 1,
-            "tool_name": "file_tool",
-            "action": "read",
-            "description": "Read the source file",
+            "tool_name": "tool_name",
+            "action": "action_name",
+            "description": "What this step does",
             "params_hint": {{
-                "read_path": "config.json"
-            }}
-        }},
-        {{
-            "step": 2,
-            "tool_name": "llm_tool",
-            "action": "analyze",
-            "description": "Analyze the file content",
-            "params_hint": {{
-                "content": "[RESULT:Session0_1]",
-                "prompt": "Analyze this configuration"
-            }}
-        }},
-        {{
-            "step": 3,
-            "tool_name": "file_tool",
-            "action": "write",
-            "description": "Save analysis result to file",
-            "params_hint": {{
-                "write_path": "analysis.txt",
-                "write_content": "[RESULT:Session0_2]"
+                "param1": "value or [FILE:path] or [RESULT:Session0_X]"
             }}
         }}
     ]
 }}
 
-## IMPORTANT: Provide params_hint for Each Step
-For each step in the plan, include a "params_hint" field with suggested parameters:
-- Use exact parameter names with action prefix (e.g., read_path, write_content, analyze_prompt)
-- Provide concrete values when known from the user query (e.g., file names, prompts)
-- Use [RESULT:SessionX_Y] placeholders for outputs from previous steps (SessionX is current session, Y is step number)
-- Use descriptive placeholders for unknown content (e.g., "<user feedback>", "<analysis result>")
-
-Example params_hint patterns:
-- File operations: {{"read_path": "example.py"}}, {{"write_path": "output.txt", "write_content": "[RESULT:Session0_1]"}}
-- LLM operations: {{"content": "[RESULT:Session0_1]", "prompt": "Analyze vulnerabilities"}}
-- Mixed: {{"file_path": "test.c", "instruction": "Modify based on static.md"}}
-
 If no tools needed:
 {{
-    "thought": "This is a simple question I can answer directly",
-    "direct_answer": "Your answer here (IMPORTANT: Respond in Korean/한글)"
+    "thought": "This can be answered directly",
+    "direct_answer": "Your answer (in Korean/한글)"
 }}
 
 ## Rules
 - Maximum {self.max_steps} steps
-- Use only available tools and actions
-- Each step should have clear purpose
-- Order steps logically (data dependencies)
+- Use references ([FILE:*], [RESULT:*]) to minimize steps
+- Each step must have params_hint with concrete values or references
 - Respond with valid JSON only"""
 
             # _needs_tools=True일 때만 files_context 추가
@@ -955,54 +939,25 @@ Create an execution plan. Respond with JSON only."""
 ## Current Action Schema
 {tool_schema}
 
-## Using Previous Results
+## Reference System
+You can use these references in parameter values:
 
-**IMPORTANT: Prefer using [RESULT:session_id_step] references over regenerating content.**
+**[FILE:path]** - Reference file content directly
+- Example: {{"content": "[FILE:example.py]"}} → file content is loaded automatically
+- Use for: Loading file content without a separate read step
 
-When a previous step's output can be used, reference it with [RESULT:session_id_step] instead of:
-- Reading the same file again
-- Regenerating the same content
-- Copying/pasting previous outputs
-
-Only generate new content when you need to:
-- Transform or filter previous results
-- Combine multiple results
-- Add new information not available in previous steps
-
-Use this syntax in any parameter value to insert the output from a previous step.
-Example: [RESULT:Session0_1] references the output of Step 1 in Session0.
+**[RESULT:session_step]** - Reference previous step output
+- Example: [RESULT:Session0_1] → output from Step 1 in Session0
+- Use for: Reusing results from earlier steps in the current execution
 
 ## Response Format for Current Step
 {response_format}
-
-## IMPORTANT: Extract File References from Description
-**When the step description mentions file names, use them directly in the appropriate parameters.**
-
-Example 1:
-Description: "Modify sample.c based on the instructions in static.md"
-→ Use file_path="sample.c" for content parameter
-→ Use file_path="static.md" for instruction parameter
-
-Example 2:
-Description: "Analyze vulnerabilities in example.py"
-→ Use file_path="example.py" for content parameter
-
-Example 3:
-Description: "Read config.json and write summary to output.md"
-→ Use read_path="config.json"
-→ Use write_path="output.md"
-
-Guidelines:
-- Look for file extensions (.py, .c, .md, .txt, .json, etc.) in the description
-- Map file names to the most appropriate parameter (content, file_path, instruction, etc.)
-- Check the action schema above to see which parameters accept file_path
-- Only use [RESULT:session_id_step] when the file content is already available from a previous step
 
 ## Rules
 - Execute ONLY the current step (Step {planned_step.step})
 - You MUST generate exactly ONE tool_call for this step
 - Use parameter names with action prefix (e.g., read_path, write_content)
-- Reference previous results using [RESULT:session_id_step] format when appropriate (e.g., [RESULT:Session0_1])
+- Use references ([FILE:*], [RESULT:*]) when appropriate
 - All required parameters must be provided
 - Respond with valid JSON only"""
 
@@ -1010,21 +965,13 @@ Guidelines:
         params_hint_section = ""
         if planned_step.params_hint:
             params_hint_section = f"""
-## Suggested Parameters (from Planning Phase)
+## Suggested Parameters
 {json.dumps(planned_step.params_hint, indent=2, ensure_ascii=False)}
 
-**IMPORTANT**: The suggested parameters above are hints from the planning phase.
-- Use them as a starting point if they are reasonable and valid
-- Verify parameter names match the action schema (with correct action prefix)
-- Adjust or override based on current execution context
-- Replace [RESULT:xxx] placeholders with actual result references if available
-- Ensure all required parameters are provided
+Use these as hints - verify they match the schema and adjust if needed.
 """
         else:
-            params_hint_section = """
-## Suggested Parameters
-No parameter suggestions were provided in the planning phase.
-"""
+            params_hint_section = ""
 
         user_prompt = f"""{execution_context}
 
@@ -1032,8 +979,6 @@ No parameter suggestions were provided in the planning phase.
 Step {planned_step.step}: {planned_step.tool_name}.{planned_step.action}
 Description: {planned_step.description}
 {params_hint_section}
-IMPORTANT: Check the description for file names and map them to appropriate parameters.
-
 Provide exact parameters for this step. Respond with JSON only."""
 
         raw_response = self._call_llm_api(system_prompt, user_prompt)
