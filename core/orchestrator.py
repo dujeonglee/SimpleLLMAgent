@@ -20,6 +20,7 @@ from core.shared_storage import SharedStorage
 from core.debug_logger import DebugLogger
 from core.base_tool import ToolRegistry, ToolResult, ActionSchema
 from core.json_parser import parse_json_strict
+from core.prompt_builder import PromptBuilder
 from core.execution_events import (
     ExecutionEvent,
     PlanPromptEvent,
@@ -399,79 +400,19 @@ class Orchestrator:
         if not action_schema:
             return None
 
-        # action schema를 JSON 형식으로 변환
-        action_schema_dict = action_schema.to_dict()
-        action_schema_json = json.dumps(
-            {
-                "action": original_call.action,
-                **action_schema_dict
-            },
-            indent=2,
-            ensure_ascii=False
-        )
-
         # 사용 가능한 결과 목록
         available_results = self.storage.get_available_results_summary()
 
-        system_prompt = f"""You are analyzing a tool execution error and providing corrected parameters.
-
-## Current Step Context
-Step {planned_step.step}: {planned_step.description}
-
-## Current Action Schema
-Tool: {original_call.name}
-Action: {original_call.action}
-
-{action_schema_json}
-
-## Previous Execution Attempt
-Parameters Used:
-{json.dumps(original_call.params, indent=2, ensure_ascii=False)}
-
-Error Occurred:
-{error_message}
-
-## Available Previous Results (for reference)
-{available_results}
-
-## Your Task
-1. Analyze why the execution failed based on the error message
-2. Determine if the error can be fixed by modifying parameters
-3. If fixable: provide corrected parameters
-4. If NOT fixable (e.g., file doesn't exist, permission denied): return empty tool_calls
-
-## Response Format (JSON only)
-
-If error is fixable with parameter changes:
-{{
-    "thought": "Analysis: why it failed and how to fix it",
-    "tool_calls": [{{
-        "name": "{original_call.name}",
-        "arguments": {{
-            "action": "{original_call.action}",
-            ... corrected parameters ...
-        }}
-    }}]
-}}
-
-If error CANNOT be fixed by changing parameters:
-{{
-    "thought": "Analysis: why this error cannot be fixed with parameter changes",
-    "tool_calls": []
-}}
-
-## Rules
-- You MUST respond with valid JSON only
-- Analyze the error carefully before deciding
-- Common fixable errors: wrong path format, missing required params, invalid parameter values
-- Common unfixable errors: file not found, permission denied, network unreachable
-- Use [RESULT:session_id_step] to reference previous results if helpful (e.g., [RESULT:Session0_1])"""
-
-        user_prompt = f"""## Retry Attempt {retry_count}
-
-The tool execution failed. Analyze the error and provide corrected parameters if possible.
-
-Respond with JSON only."""
+        # PromptBuilder 사용
+        builder = PromptBuilder()
+        system_prompt, user_prompt = builder.for_retry(
+            tool_name=original_call.name,
+            action=original_call.action,
+            action_schema=action_schema.to_dict(),
+            error_message=error_message,
+            failed_params=original_call.params,
+            previous_results=available_results
+        ).build()
 
         try:
             raw_response = self._call_llm_api(system_prompt, user_prompt)
@@ -584,24 +525,11 @@ Respond with JSON only."""
         tools_list = "\n".join([f"- {name}: {tool.get_schema().get('description', 'No description')}"
                                 for name, tool in self.tools._tools.items()])
 
-        system_prompt = f"""You are a query classifier. Determine if the user's query requires using tools or can be answered directly.
-
-## Available Tools
-{tools_list}
-
-## Your Task
-Analyze if the query needs tool usage (file operations, code analysis, web search, etc.) or can be answered with general knowledge.
-
-## Response Format (JSON only)
-{{
-    "needs_tools": true/false,
-    "reasoning": "Brief explanation"
-}}"""
-
-        user_prompt = f"""## User Query
-{user_query}
-
-Does this query require tool usage? Respond with JSON only."""
+        # PromptBuilder 사용
+        builder = PromptBuilder()
+        system_prompt, user_prompt = builder.for_query_classification(tools_list).build(
+            user_query=user_query
+        )
 
         self.logger.debug("Query classification 시작")
 
@@ -625,119 +553,30 @@ Does this query require tool usage? Respond with JSON only."""
         Returns:
             tuple: (parsed_response, system_prompt, user_prompt, raw_response)
         """
-        if not self._needs_tools:
-            # 툴이 필요 없는 경우: direct answer 생성
-            system_prompt = """You are a helpful AI assistant. Answer the user's question directly and concisely.
+        # PromptBuilder 사용
+        builder = PromptBuilder()
 
-## Response Format (JSON only)
-{
-    "direct_answer": "Your answer here"
-}"""
+        if self._needs_tools:
+            # Tool schemas 가져오기
+            tool_schemas = {
+                tool_name: tool.get_schema()
+                for tool_name, tool in self.tools._tools.items()
+            }
 
-            user_prompt = f"""## User Query
-{user_query}
-
-Provide a direct answer. Respond with JSON only."""
+            system_prompt, user_prompt = builder.for_planning(
+                tool_schemas=tool_schemas,
+                max_steps=self.max_steps,
+                needs_tools=True,
+                files_context=self._files_context
+            ).build(user_query=user_query)
 
         else:
-            # 툴이 필요한 경우: 기존 planning 로직
-            tools_schema = json.dumps(
-                self.tools.get_all_schemas(),
-                indent=2,
-                ensure_ascii=False
-            )
-
-            system_prompt = f"""You are a task planning expert. Analyze the user's request and create an execution plan.
-
-## Available Tools
-{tools_schema}
-
-## Your Task
-1. Analyze what the user wants
-2. Create a step-by-step plan using available tools
-3. If plan cannot be created, provide direct answer explaining why
-
-## Reference System
-You can use references in parameter values:
-
-**[FILE:path]** - Reference file content directly (RECOMMENDED)
-- Automatically replaced with file content from workspace/files/
-- Example: {{"content": "[FILE:example.py]"}} → file content is loaded
-- **PREFER this over file_tool.read** - it's more efficient and reduces plan steps
-- Use when: You need file content in any parameter
-
-**[RESULT:session_step]** - Reference previous step output
-- Example: [RESULT:Session0_1] → output from Step 1 in Session0
-- Use when: Reusing output from earlier steps in the current plan
-
-## Plan Optimization
-**Minimize steps by using references ([FILE:*], [RESULT:*]) instead of intermediate operations.**
-
-Good (1 step with FILE reference):
-{{
-    "step": 1,
-    "tool_name": "llm_tool",
-    "action": "staticanalysis",
-    "params_hint": {{"content": "[FILE:example.py]"}}
-}}
-
-Bad (2 steps - unnecessary read step):
-{{
-    "step": 1,
-    "tool_name": "file_tool",
-    "action": "read",
-    "params_hint": {{"read_path": "example.py"}}
-}},
-{{
-    "step": 2,
-    "tool_name": "llm_tool",
-    "action": "staticanalysis",
-    "params_hint": {{"content": "[RESULT:Session0_1]"}}
-}}
-
-## Response Format (JSON only)
-
-If tools are needed:
-{{
-    "thought": "Brief analysis",
-    "plan": [
-        {{
-            "step": 1,
-            "tool_name": "tool_name",
-            "action": "action_name",
-            "description": "What this step does",
-            "params_hint": {{
-                "param1": "value or [FILE:path] or [RESULT:Session0_X]"
-            }}
-        }}
-    ]
-}}
-
-If no tools needed:
-{{
-    "thought": "This can be answered directly",
-    "direct_answer": "Your answer (in Korean/한글)"
-}}
-
-## Rules
-- Maximum {self.max_steps} steps
-- Use references ([FILE:*], [RESULT:*]) to minimize steps
-- Each step must have params_hint with concrete values or references
-- Respond with valid JSON only"""
-
-            # _needs_tools=True일 때만 files_context 추가
-            if self._files_context:
-                user_prompt = f"""## User Request
-{user_query}
-
-{self._files_context}
-
-Create an execution plan. Respond with JSON only."""
-            else:
-                user_prompt = f"""## User Request
-{user_query}
-
-Create an execution plan. Respond with JSON only."""
+            # 툴이 필요 없는 경우: direct answer
+            system_prompt, user_prompt = builder.for_planning(
+                tool_schemas={},
+                max_steps=self.max_steps,
+                needs_tools=False
+            ).build(user_query=user_query)
 
         # 공통: LLM 호출 및 파싱
         self.logger.debug("Planning 호출", {
@@ -917,71 +756,19 @@ Create an execution plan. Respond with JSON only."""
         if not action_schema:
             raise ValueError(f"Action not found: {planned_step.tool_name}.{planned_step.action}")
 
-        # 특정 action의 스키마만 JSON으로 변환
-        action_schema_dict = action_schema.to_dict()
-        tool_schema = json.dumps(
-            {
-                "tool": planned_step.tool_name,
-                "action": planned_step.action,
-                "schema": action_schema_dict
-            },
-            indent=2,
-            ensure_ascii=False
-        )
-
-        # 실행 컨텍스트 가져오기 (user_query + 결과 목록)
+        # 실행 컨텍스트 가져오기
         execution_context = self.storage.get_available_results_summary(max_output_preview=300)
 
-        # 현재 action의 schema를 기반으로 response format 생성
-        response_format = self._generate_response_format(planned_step, action_schema)
-
-        system_prompt = f"""You are executing a planned task. Provide exact parameters for the current step.
-
-## Current Action Schema
-{tool_schema}
-
-## Reference System
-You can use these references in parameter values:
-
-**[FILE:path]** - Reference file content directly (RECOMMENDED)
-- Example: {{"content": "[FILE:example.py]"}} → file content is loaded automatically
-- **PREFER this over file_tool.read** - it's more efficient
-- Use for: Loading file content in any parameter
-
-**[RESULT:session_step]** - Reference previous step output
-- Example: [RESULT:Session0_1] → output from Step 1 in Session0
-- Use for: Reusing results from earlier steps in the current execution
-
-## Response Format for Current Step
-{response_format}
-
-## Rules
-- Execute ONLY the current step (Step {planned_step.step})
-- You MUST generate exactly ONE tool_call for this step
-- Use parameter names with action prefix (e.g., read_path, write_content)
-- Use references ([FILE:*], [RESULT:*]) when appropriate
-- All required parameters must be provided
-- Respond with valid JSON only"""
-
-        # params_hint를 포맷팅 (있는 경우)
-        params_hint_section = ""
-        if planned_step.params_hint:
-            params_hint_section = f"""
-## Suggested Parameters
-{json.dumps(planned_step.params_hint, indent=2, ensure_ascii=False)}
-
-Use these as hints - verify they match the schema and adjust if needed.
-"""
-        else:
-            params_hint_section = ""
-
-        user_prompt = f"""{execution_context}
-
-## Current Step to Execute
-Step {planned_step.step}: {planned_step.tool_name}.{planned_step.action}
-Description: {planned_step.description}
-{params_hint_section}
-Provide exact parameters for this step. Respond with JSON only."""
+        # PromptBuilder 사용
+        builder = PromptBuilder()
+        system_prompt, user_prompt = builder.for_execution(
+            tool_name=planned_step.tool_name,
+            action=planned_step.action,
+            action_schema=action_schema.to_dict(),
+            step_num=planned_step.step,
+            params_hint=planned_step.params_hint,
+            execution_context=execution_context
+        ).build()
 
         raw_response = self._call_llm_api(system_prompt, user_prompt)
 
@@ -998,77 +785,6 @@ Provide exact parameters for this step. Respond with JSON only."""
     # Helper Methods
     # =========================================================================
 
-
-    def _generate_response_format(self, planned_step: PlannedStep, action_schema: Optional[ActionSchema]) -> str:
-        """
-        Generate response format template based on the action schema
-
-        Args:
-            planned_step: The planned step to execute
-            action_schema: The ActionSchema for the current action
-
-        Returns:
-            str: JSON template showing the expected response format
-        """
-        if not action_schema:
-            # Fallback to generic format if schema not found
-            return f"""{{
-    "thought": "Brief explanation of parameter choices",
-    "tool_calls": [
-        {{
-            "name": "{planned_step.tool_name}",
-            "arguments": {{
-                "action": "{planned_step.action}",
-                ... parameters ...
-            }}
-        }}
-    ]
-}}"""
-
-        # Build parameter examples from schema
-        param_examples = {}
-        param_examples["action"] = planned_step.action
-
-        for param in action_schema.params:
-            param_name = param.name
-            param_desc = param.description
-
-            # Generate example value based on description
-            if "path" in param_name.lower() or "file" in param_name.lower():
-                example_value = '"example.txt"'
-            elif "content" in param_name.lower():
-                example_value = '"[RESULT:Session0_1]" or "actual content"'
-            elif param.param_type == "int":
-                example_value = "100"
-            elif param.param_type == "bool":
-                example_value = "true"
-            else:
-                example_value = f'"<{param_desc[:50]}>"' if param_desc else '"example value"'
-
-            # Mark required parameters
-            if param.required:
-                param_examples[param_name] = f"{example_value}  // REQUIRED"
-            else:
-                param_examples[param_name] = f"{example_value}  // optional"
-
-        # Format as JSON with comments
-        param_lines = []
-        for key, value in param_examples.items():
-            param_lines.append(f'                "{key}": {value}')
-
-        params_str = ",\n".join(param_lines)
-
-        return f"""{{
-    "thought": "Brief explanation of why these specific parameters are needed for this step",
-    "tool_calls": [
-        {{
-            "name": "{planned_step.tool_name}",
-            "arguments": {{
-{params_str}
-            }}
-        }}
-    ]
-}}"""
 
     def _substitute_result_refs(self, params: Dict) -> Dict:
         """파라미터의 [RESULT:*] 참조를 실제 값으로 치환"""
@@ -1261,33 +977,15 @@ Provide exact parameters for this step. Respond with JSON only."""
         """Phase 3: 최종 응답 생성"""
         results = self.storage.get_results()
         previous_results = self._format_previous_results(results)
-        plan_status = self._format_plan_with_status()
+        plan_summary = self._format_plan_with_status()
 
-        system_prompt = """You are generating the final response based on executed tasks.
-
-## Your Task
-1. Review what was done (plan execution results)
-2. Summarize the findings
-3. Provide a helpful, complete answer to the user
-
-## Rules
-- Be concise but thorough
-- Reference specific results when relevant
-- If any step failed, mention it and provide alternatives if possible
-- Respond naturally, not in JSON format
-- If the task was to save a file, confirm it was saved successfully
-- IMPORTANT: Respond in Korean (한글로 답변하세요)"""
-
-        user_prompt = f"""## Original User Query
-{user_query}
-
-## Execution Plan
-{plan_status}
-
-## Execution Results
-{previous_results}
-
-Based on the above results, provide a final answer to the user's query."""
+        # PromptBuilder 사용
+        builder = PromptBuilder()
+        system_prompt, user_prompt = builder.for_final_answer(
+            user_query=user_query,
+            plan_summary=plan_summary,
+            results_summary=previous_results
+        ).build()
 
         response = self._call_llm_api(system_prompt, user_prompt)
         return response.strip()
