@@ -1110,11 +1110,9 @@ Provide exact parameters for this step. Respond with JSON only."""
     def _substitute_file_refs(self, params: Dict) -> Dict:
         """파라미터의 [FILE:*] 참조를 실제 파일 내용으로 치환"""
         import re
-        import os
         from pathlib import Path
 
-        BASE_PATH = os.path.join(".", "workspace")
-        BASE_PATH = os.path.join(BASE_PATH, "files")
+        BASE_PATH = Path(".") / "workspace" / "files"
 
         def read_file_content(file_path: str) -> str:
             """파일 내용을 읽어서 반환"""
