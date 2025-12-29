@@ -660,10 +660,11 @@ Provide a direct answer. Respond with JSON only."""
 ## Reference System
 You can use references in parameter values:
 
-**[FILE:path]** - Reference file content directly
+**[FILE:path]** - Reference file content directly (RECOMMENDED)
 - Automatically replaced with file content from workspace/files/
 - Example: {{"content": "[FILE:example.py]"}} → file content is loaded
-- Use when: File content is needed but hasn't been read yet
+- **PREFER this over file_tool.read** - it's more efficient and reduces plan steps
+- Use when: You need file content in any parameter
 
 **[RESULT:session_step]** - Reference previous step output
 - Example: [RESULT:Session0_1] → output from Step 1 in Session0
@@ -942,9 +943,10 @@ Create an execution plan. Respond with JSON only."""
 ## Reference System
 You can use these references in parameter values:
 
-**[FILE:path]** - Reference file content directly
+**[FILE:path]** - Reference file content directly (RECOMMENDED)
 - Example: {{"content": "[FILE:example.py]"}} → file content is loaded automatically
-- Use for: Loading file content without a separate read step
+- **PREFER this over file_tool.read** - it's more efficient
+- Use for: Loading file content in any parameter
 
 **[RESULT:session_step]** - Reference previous step output
 - Example: [RESULT:Session0_1] → output from Step 1 in Session0
