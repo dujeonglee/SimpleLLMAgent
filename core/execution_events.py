@@ -6,46 +6,13 @@ Orchestrator에서 발생하는 다양한 실행 이벤트를 정의합니다.
 """
 import re
 import json
+import html
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional
 from core.json_parser import parse_json_strict
 
-def extract_fenced_code(text: str) -> Optional[str]:
-    """
-    Fenced 코드 블록에서 코드 내용만 추출
-    
-    Args:
-        text: 입력 문자열
-        
-    Returns:
-        Fenced 코드 블록이면 코드 내용, 아니면 None
-    """
-    stripped = text.strip()
-    
-    # Fenced 코드 블록 패턴 체크 (```로 시작하고 끝나는지)
-    if not (stripped.startswith('```') and stripped.endswith('```')):
-        return None
-    
-    lines = stripped.split('\n')
-    
-    # 최소 3줄 필요 (시작```, 코드, 끝```)
-    if len(lines) < 2:
-        return None
-    
-    # 첫 줄이 ```로 시작하는지 확인 (언어 태그 포함 가능)
-    if not re.match(r'^```\w*\s*$', lines[0]):
-        return None
-    
-    # 마지막 줄이 ```인지 확인
-    if lines[-1].strip() != '```':
-        return None
-    
-    # 첫 줄과 마지막 줄 제외한 내용 반환
-    code_content = '\n'.join(lines[1:-1])
-    
-    return code_content
 # =============================================================================
 # Base Class
 # =============================================================================
@@ -76,9 +43,7 @@ class PlanPromptEvent(ExecutionEvent):
 
     def to_display(self) -> str:
         """구조화된 텍스트 포맷으로 출력"""
-        output = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        output += "🔍 **Plan Generation Details**\n"
-        output += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        output = "🔍 **Plan Generation Details**\n"
         output += "<details>\n<summary><b>System Prompt</b></summary>\n\n"
         output += f"```\n{self.system_prompt}\n```\n</details>\n\n"
         output += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
@@ -124,7 +89,7 @@ class ThinkingEvent(ExecutionEvent):
 
     def to_display(self) -> str:
         return f'''
-<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span style="font-style: italic;">
+<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span>
 \n{self.message}
 </span></div>'''
 
@@ -146,9 +111,7 @@ class StepPromptEvent(ExecutionEvent):
 
     def to_display(self) -> str:
         # Execution Details (프롬프트 정보가 있으면 표시)
-        output = "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        output += f"🔧 **Step {self.step}: {self.tool_name}.{self.action}**\n"
-        output += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        output = f"🔧 **Step {self.step}: {self.tool_name}.{self.action}**\n"
         output += "<details>\n<summary><b>System Prompt</b></summary>\n\n"
         output += f"```\n{self.system_prompt}\n```\n</details>\n\n"
         output += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
@@ -180,7 +143,7 @@ class ToolCallEvent(ExecutionEvent):
 
     def to_display(self) -> str:
         output = f'''
-<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span style="font-style: italic;">
+<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span>
 \n{self.tool_name}.{self.action} 실행 중 입니다.
 </span></div>'''
         return output
@@ -210,14 +173,7 @@ class ToolResultEvent(ExecutionEvent):
         status_emoji = "✅" if self.success else "❌"
         summary = f"Output: {status_emoji} {'완료' if self.success else '실패'}"
         output = f"<details>\n<summary><b>{summary}</b></summary>\n\n"
-        markdown_code_block = extract_fenced_code(self.result)
-        if markdown_code_block:
-            output += f"```\n{markdown_code_block}\n```\n</details>\n\n"
-        else:
-            try:
-                output += f"```\n{json.dumps(parse_json_strict(self.result), indent=2)}\n```\n</details>\n\n"
-            except (ValueError):
-                output += f"```\n{self.result}\n```\n</details>\n\n"
+        output += f"{html.escape(self.result)}</details>\n\n"
 
         return output
 

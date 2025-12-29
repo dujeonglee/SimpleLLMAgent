@@ -199,7 +199,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[tuple, None, Non
             # StepPromptEvent는 빈 문자열을 반환 (ToolResultEvent에 포함되므로)
             # 따라서 빈 문자열이 아닐 때만 추가
             if display_text:
-                temporal_event_str = '''<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div><span style="font-style: italic;">'''
+                temporal_event_str = '''<div style="display: flex; align-items: center; gap: 8px;"><div class="spinner"></div>'''
                 if accumulated_output and temporal_event_str in accumulated_output[-1]:
                     accumulated_output.pop()
 
