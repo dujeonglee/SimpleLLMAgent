@@ -62,20 +62,20 @@ class ConfigManager:
         self.logger.info("ConfigManager 초기화", {"path": config_path})
     
     def load_initial_llm_config(self) -> LLMConfig:
-        """하드코딩된 기본 설정으로 LLMConfig 생성 및 파일 저장"""
+        """툴 호출 및 코드 분석에 최적화된 LLM 설정 (64GB VRAM)"""
         config = LLMConfig(
             base_url="http://localhost:11434",
             model="llama3.2",
-            timeout=120,
-            temperature=0.7,
-            max_tokens=2048,
-            num_ctx=4096,
-            top_p=0.9,
-            top_k=40,
-            repeat_penalty=1.1,
+            timeout=600,              # 대용량 컨텍스트 처리 시간
+            temperature=0.1,
+            max_tokens=16384,         # 긴 분석 결과 출력
+            num_ctx=65536,            # 64K 컨텍스트 (여러 파일 동시 분석 가능)
+            top_p=0.95,
+            top_k=20,
+            repeat_penalty=1.0,
             frequency_penalty=0.0,
             presence_penalty=0.0,
-            max_steps=10
+            max_steps=20
         )
         self.save_llm_config(config)
         self.logger.info("초기 LLM 설정 생성 완료", {"model": config.model})
