@@ -212,7 +212,7 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[tuple, None, Non
             file_list_update = gr.update()
             if isinstance(event, ToolResultEvent):
                 if event.tool_name == "file_tool" and event.action in ["write", "delete"] and event.success:
-                    file_list_update = gr.update(value=get_file_list_html())
+                    file_list_update = gr.update(value=get_files_data())
 
             # FinalAnswerEvent나 ErrorEvent가 오면 종료 처리
             if isinstance(event, (FinalAnswerEvent, ErrorEvent)):
@@ -370,37 +370,13 @@ def save_settings(url, model_display, temperature, max_tokens, top_p, top_k, rep
 # File Management Functions
 # =============================================================================
 
-def upload_files(files):
-    """파일 업로드"""
-    state = get_app_state()
-    
-    if not files:
-        return get_file_list_html(), "파일을 선택해주세요."
-    
-    uploaded = []
-    for file in files:
-        file_info = state.workspace_manager.save_upload(file.name)
-        if file_info:
-            uploaded.append(file_info.name)
-    
-    if uploaded:
-        return get_file_list_html(), f"✅ {len(uploaded)}개 파일 업로드됨"
-    return get_file_list_html(), "❌ 업로드 실패"
-
-
-def get_file_list_html() -> str:
-    import html
+def get_files_data() -> List[Dict]:
+    """파일 정보를 딕셔너리 리스트로 반환"""
     state = get_app_state()
     files = state.workspace_manager.list_files()
-
-    if not files:
-        return "<p style='color: gray;'>파일이 없습니다.</p>"
-
-    html_output = "<table style='width:100%; border-collapse:collapse;'>"
-    html_output += "<tr style='background:#f0f0f0;'><th>이름</th><th>크기</th><th>출처</th></tr>"
-
     files_dir = os.path.join(state.workspace_path, "files")
 
+    result = []
     for f in files:
         size = f"{f.size / 1024:.1f}KB" if f.size >= 1024 else f"{f.size}B"
         source = "📤 업로드" if f.source == "upload" else "🤖 생성"
@@ -410,61 +386,63 @@ def get_file_list_html() -> str:
         content = ""
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
-                content = html.escape(file.read())
+                content = file.read()
         except UnicodeDecodeError:
             try:
                 with open(file_path, 'r', encoding='cp949') as file:
-                    content = html.escape(file.read())
+                    content = file.read()
             except:
                 content = "[파일 내용을 읽을 수 없습니다 - 바이너리 파일일 수 있습니다]"
         except Exception as e:
-            content = f"[오류 발생: {html.escape(str(e))}]"
+            content = f"[오류 발생: {str(e)}]"
 
-        # details/summary 태그로 파일 내용 포함
-        file_display = f"""
-        <details>
-            <summary>{html.escape(f.name)}</summary>
-            <pre style='background:#f5f5f5; padding:8px; margin-top:4px; border-radius:4px; max-height:300px; overflow-y:auto; white-space:pre-wrap; word-wrap:break-word; overflow-x:auto;'>{content}</pre>
-        </details>
-        """
+        result.append({
+            'name': f.name,
+            'size': size,
+            'source': source,
+            'content': content
+        })
 
-        html_output += f"<tr><td>{file_display}</td><td>{size}</td><td>{source}</td></tr>"
-
-    html_output += "</table>"
-    return html_output
+    return result
 
 
-def get_file_choices() -> List[str]:
+def upload_files(files):
+    """파일 업로드"""
     state = get_app_state()
-    files = state.workspace_manager.list_files()
-    return [f.name for f in files]
+
+    if not files:
+        return get_files_data(), "파일을 선택해주세요."
+
+    uploaded = []
+    for file in files:
+        file_info = state.workspace_manager.save_upload(file.name)
+        if file_info:
+            uploaded.append(file_info.name)
+
+    if uploaded:
+        return get_files_data(), f"✅ {len(uploaded)}개 파일 업로드됨"
+    return get_files_data(), "❌ 업로드 실패"
 
 
-def delete_selected_files(selected: List[str]):
-    """선택된 파일 삭제"""
+def delete_single_file(filename: str):
+    """단일 파일 삭제"""
     state = get_app_state()
-    
-    if not selected:
-        return get_file_list_html(), "삭제할 파일을 선택해주세요.", gr.update(choices=get_file_choices())
-    
-    deleted = 0
-    for name in selected:
-        if state.workspace_manager.delete_file(name):
-            deleted += 1
-    
-    return get_file_list_html(), f"✅ {deleted}개 파일 삭제됨", gr.update(choices=get_file_choices(), value=[])
+    success = state.workspace_manager.delete_file(filename)
+    if success:
+        return get_files_data(), f"✅ '{filename}' 파일 삭제됨"
+    return get_files_data(), f"❌ '{filename}' 파일 삭제 실패"
 
 
 def delete_all_files():
     """전체 파일 삭제"""
     state = get_app_state()
     count = state.workspace_manager.delete_all_files()
-    return get_file_list_html(), f"✅ {count}개 파일 삭제됨", gr.update(choices=[], value=[])
+    return get_files_data(), f"✅ {count}개 파일 삭제됨"
 
 
 def refresh_file_list():
     """파일 목록 새로고침"""
-    return get_file_list_html(), gr.update(choices=get_file_choices())
+    return get_files_data(), ""
 
 
 # =============================================================================
@@ -564,18 +542,42 @@ def create_ui() -> gr.Blocks:
                 with gr.Row():
                     file_upload = gr.File(label="파일 업로드", file_count="multiple", file_types=None)
                     upload_btn = gr.Button("📤 업로드", size="sm")
-                
-                file_list_html = gr.HTML(get_file_list_html())
-                
+
                 with gr.Row():
-                    file_select = gr.CheckboxGroup(choices=get_file_choices(), label="삭제할 파일 선택")
-                
-                with gr.Row():
-                    delete_selected_btn = gr.Button("🗑️ 선택 삭제", size="sm")
                     delete_all_btn = gr.Button("🗑️ 전체 삭제", size="sm", variant="stop")
                     refresh_files_btn = gr.Button("🔄 새로고침", size="sm")
-                
+
                 file_status = gr.Markdown("")
+
+                # 파일 목록을 위한 State
+                files_state = gr.State([])
+
+                # 동적 파일 리스트를 렌더링하는 함수
+                @gr.render(inputs=[files_state])
+                def render_file_list(files):
+                    if not files:
+                        gr.Markdown("_파일이 없습니다._")
+                        return
+
+                    for file_info in files:
+                        with gr.Row():
+                            with gr.Column(scale=8):
+                                with gr.Accordion(file_info['name'], open=False):
+                                    gr.Code(
+                                        value=file_info['content'],
+                                        language=None,
+                                        interactive=False,
+                                        max_lines=20
+                                    )
+                            with gr.Column(scale=2):
+                                gr.Markdown(f"**크기:** {file_info['size']}")
+                                gr.Markdown(f"**출처:** {file_info['source']}")
+                            with gr.Column(scale=1):
+                                delete_btn = gr.Button("🗑️", size="sm", variant="stop")
+                                delete_btn.click(
+                                    fn=lambda fname=file_info['name']: delete_single_file(fname),
+                                    outputs=[files_state, file_status]
+                                )
             
         
         # =================================================================
@@ -611,7 +613,7 @@ def create_ui() -> gr.Blocks:
 
             First yield: clears input field immediately
             Subsequent yields: stream from chat_stream
-            Returns: (chatbot, send_btn, stop_btn, msg_input, file_list_html)
+            Returns: (chatbot, send_btn, stop_btn, msg_input, files_state)
             """
             # First yield to clear input immediately
             yield history, gr.update(interactive=False), gr.update(interactive=True), "", gr.update()
@@ -626,7 +628,7 @@ def create_ui() -> gr.Blocks:
         msg_input.submit(
             fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html],
+            outputs=[chatbot, send_btn, stop_btn, msg_input, files_state],
             concurrency_limit=1
         ).then(
             fn=on_chat_complete,
@@ -636,7 +638,7 @@ def create_ui() -> gr.Blocks:
         send_btn.click(
             fn=chat_stream_with_clear,
             inputs=[msg_input, chatbot],
-            outputs=[chatbot, send_btn, stop_btn, msg_input, file_list_html],
+            outputs=[chatbot, send_btn, stop_btn, msg_input, files_state],
             concurrency_limit=1
         ).then(
             fn=on_chat_complete,
@@ -654,33 +656,24 @@ def create_ui() -> gr.Blocks:
         upload_btn.click(
             fn=upload_files,
             inputs=[file_upload],
-            outputs=[file_list_html, file_status]
-        ).then(
-            fn=lambda: gr.update(choices=get_file_choices()),
-            outputs=[file_select]
+            outputs=[files_state, file_status]
         )
-        
-        delete_selected_btn.click(
-            fn=delete_selected_files,
-            inputs=[file_select],
-            outputs=[file_list_html, file_status, file_select]
-        )
-        
+
         delete_all_btn.click(
             fn=delete_all_files,
-            outputs=[file_list_html, file_status, file_select]
+            outputs=[files_state, file_status]
         )
-        
-        refresh_files_btn.click(fn=refresh_file_list, outputs=[file_list_html, file_select])
+
+        refresh_files_btn.click(
+            fn=refresh_file_list,
+            outputs=[files_state, file_status]
+        )
 
         # Page Load
         def on_page_load():
-            return (
-                get_file_list_html(),
-                gr.update(choices=get_file_choices())
-            )
+            return get_files_data()
 
-        app.load(fn=on_page_load, outputs=[file_list_html, file_select])
+        app.load(fn=on_page_load, outputs=[files_state])
 
     return app
 
