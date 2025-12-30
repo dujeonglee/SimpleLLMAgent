@@ -219,7 +219,7 @@ You can use these references in parameter values:
         content = "## Response Format\n\n"
 
         if format_type == "json":
-            content += "Respond with valid JSON only.\n\n"
+            content += "Respond with valid JSON only. Do NOT wrap with markdown code blocks (```). Output raw JSON directly.\n\n"
             if template:
                 import json
                 content += "Format:\n"
@@ -410,7 +410,7 @@ You can use these references in parameter values:
             "Analyze the query carefully",
             "If the query asks about code, files, or requires execution → needs_tools: true",
             "If the query is a simple question that can be answered directly → needs_tools: false",
-            "Respond with valid JSON only"
+            "Respond with raw JSON only (no markdown code blocks)"
         ])
 
         return self
@@ -502,7 +502,7 @@ Bad (2 steps - unnecessary read step):
                 f"Maximum {max_steps} steps",
                 "Use references ([FILE:*], [RESULT:*]) to minimize steps",
                 "Each step must have params_hint with concrete values or references",
-                "Respond with valid JSON only"
+                "Respond with raw JSON only (no markdown code blocks)"
             ])
 
         else:
@@ -521,7 +521,7 @@ Bad (2 steps - unnecessary read step):
 
             self.add_rules([
                 "Provide clear, concise answer in Korean",
-                "Respond with valid JSON only"
+                "Respond with raw JSON only (no markdown code blocks)"
             ])
 
         self.add_constraint("max_steps", max_steps)
@@ -592,7 +592,7 @@ Bad (2 steps - unnecessary read step):
             "Use references ([FILE:*], [RESULT:*]) in parameter values when appropriate",
             "For content/prompt parameters: prefer [FILE:path] over [RESULT:*] when modifying files",
             "All required parameters must be provided",
-            "Respond with valid JSON only"
+            "Respond with raw JSON only (no markdown code blocks)"
         ])
 
         self.add_constraint("step_num", step_num)
@@ -684,7 +684,7 @@ Bad (2 steps - unnecessary read step):
             "Analyze error message carefully",
             "Only provide corrected parameters if error is truly fixable",
             "If unfixable, return tool_calls: []",
-            "Respond with valid JSON only"
+            "Respond with raw JSON only (no markdown code blocks)"
         ])
 
         return self
