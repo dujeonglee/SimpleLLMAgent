@@ -67,9 +67,9 @@ class LLMTool(BaseTool):
                 description="Perform comprehensive code review with detailed feedback on code quality, best practices, potential bugs, and improvement suggestions. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("codereview_content", "str", True,
-                               "Code content to review. Can be: direct code string, [FILE:path], or [RESULT:SessionX_Y] reference"),
+                               "Code content to review. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
                     ActionParam("codereview_instruction", "str", False,
-                               "Specific review instructions or focus areas. Can be: direct string, [FILE:path], or [RESULT:SessionX_Y] (e.g., 'Focus on error handling', 'Check for security issues')"),
+                               "Specific review instructions or focus areas. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Focus on error handling in [FILE:utils.c]')"),
                 ],
                 output_type="str",
                 output_description="Detailed code review report in Markdown format with specific recommendations"
@@ -79,9 +79,9 @@ class LLMTool(BaseTool):
                 description="Analyze software architecture, design patterns, system structure, component relationships, and architectural trade-offs. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("architectureanalysis_content", "str", True,
-                               "Code or architectural documentation to analyze. Can be: direct string, [FILE:path], or [RESULT:SessionX_Y] reference"),
+                               "Code or architectural documentation to analyze. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
                     ActionParam("architectureanalysis_instruction", "str", False,
-                               "Specific analysis instructions. Can be: direct string, [FILE:path], or [RESULT:SessionX_Y] (e.g., 'Evaluate scalability', 'Identify design patterns')"),
+                               "Specific analysis instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Evaluate scalability of [FILE:server.js]')"),
                 ],
                 output_type="str",
                 output_description="Architecture analysis report with patterns identified and recommendations in Markdown format"
@@ -91,9 +91,9 @@ class LLMTool(BaseTool):
                 description="Generate comprehensive documentation for code including docstrings, comments, API documentation, and usage examples. Returns documentation as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("codedoc_content", "str", True,
-                               "Code to document. Can be: direct code string, [FILE:path], or [RESULT:SessionX_Y] reference"),
+                               "Code to document. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
                     ActionParam("codedoc_instruction", "str", False,
-                               "Documentation instructions. Can be: direct string, [FILE:path], or [RESULT:SessionX_Y] (e.g., 'Generate API docs', 'Add inline comments', 'Create usage examples')"),
+                               "Documentation instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Generate API docs for [FILE:api.py]')"),
                 ],
                 output_type="str",
                 output_description="Generated documentation in appropriate format (Markdown, docstrings, or comments)"
@@ -103,9 +103,9 @@ class LLMTool(BaseTool):
                 description="Perform static code analysis to detect bugs, security vulnerabilities, code smells, type errors, and potential runtime issues without executing code. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("staticanalysis_content", "str", True,
-                               "Code to analyze statically. Can be: direct code string, [FILE:path], or [RESULT:SessionX_Y] reference"),
+                               "Code to analyze statically. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
                     ActionParam("staticanalysis_instruction", "str", False,
-                               "Analysis focus instructions. Can be: direct string, [FILE:path], or [RESULT:SessionX_Y] (e.g., 'Check for null pointer dereferences', 'Find memory leaks', 'Detect SQL injection risks')"),
+                               "Analysis focus instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Check [FILE:auth.c] for security issues')"),
                 ],
                 output_type="str",
                 output_description="Static analysis report with categorized issues, severity levels, and fix suggestions in Markdown format"
@@ -115,9 +115,9 @@ class LLMTool(BaseTool):
                 description="Generate new code from scratch or modify existing code based on specifications, requirements, or improvement guidelines. Returns code as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("codewriter_content", "str", False,
-                               "Existing code to modify or extend (optional for new code generation). Can be: direct code string, [FILE:path], or [RESULT:SessionX_Y] reference", None),
+                               "Existing code to modify or extend (optional for new code generation). Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format.", None),
                     ActionParam("codewriter_instruction", "str", True,
-                               "Code writing instructions and specifications. Can be: direct string, [FILE:path], or [RESULT:SessionX_Y] (e.g., 'Write a REST API handler', 'Add error handling to this function')"),
+                               "Code writing instructions and specifications. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Add error handling to [FILE:app.js]', 'Refactor [FILE:utils.py] based on [RESULT:Session0_1]')"),
                 ],
                 output_type="str",
                 output_description="Generated or modified code with explanatory comments"
@@ -127,9 +127,9 @@ class LLMTool(BaseTool):
                 description="Handle general queries, questions, and tasks that don't fit into specialized categories. Free-form interaction with LLM for any other purpose. Returns response as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
                     ActionParam("general_content", "str", False,
-                               "Content or context for the query (optional). Can be: direct string, [FILE:path], or [RESULT:SessionX_Y] reference", None),
+                               "Content or context for the query (optional). Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format.", None),
                     ActionParam("general_prompt", "str", True,
-                               "Your question, request, or instruction for the LLM. Can be: direct string, [FILE:path], or [RESULT:SessionX_Y]"),
+                               "Your question, request, or instruction for the LLM. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Modify [FILE:sample.c] based on [RESULT:Session0_1]')"),
                 ],
                 output_type="str",
                 output_description="LLM response to the general query"
