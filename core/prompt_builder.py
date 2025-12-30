@@ -90,13 +90,26 @@ class PromptBuilder:
 You can use these references in parameter values:
 
 **[FILE:path]** - Reference file content directly (RECOMMENDED)
-- Example: {"content": "[FILE:example.py]"} → file content is loaded automatically
-- **PREFER this over file_tool.read** - it's more efficient
-- Use for: Loading file content in any parameter
+- Automatically replaced with file content from workspace/files/
+- Example: {"content": "[FILE:example.py]"} → file content is loaded
+- **PREFER this over file_tool.read** - it's more efficient and reduces plan steps
+- Use when: You need file content in any parameter
+- Common use cases:
+  - Code analysis: {"content": "[FILE:main.c]"}
+  - Code modification: {"prompt": "Refactor [FILE:utils.py]"}
+  - Documentation: {"content": "[FILE:api.ts]"}
 
 **[RESULT:session_step]** - Reference previous step output
 - Example: [RESULT:Session0_1] → output from Step 1 in Session0
-- Use for: Reusing output from earlier steps in the current plan"""
+- Use when: Reusing output from earlier steps in the current plan
+- Common use cases:
+  - Pass analysis results to next step
+  - Chain multiple transformations
+  - Reference intermediate results
+
+**Important:** When modifying a file, reference the file directly in the instruction/prompt parameter, not in a separate content parameter.
+- Good: {"prompt": "Fix bugs in [FILE:app.py]"}
+- Bad: {"content": "[RESULT:Session0_1]", "prompt": "Fix bugs"}"""
 
         self.system_sections.append(PromptSection("reference_system", content, order=20))
         return self
@@ -209,9 +222,9 @@ You can use these references in parameter values:
             content += "Respond with valid JSON only.\n\n"
             if template:
                 import json
-                content += "Format:\n```json\n"
+                content += "Format:\n"
                 content += json.dumps(template, indent=2, ensure_ascii=False)
-                content += "\n```\n"
+                content += "\n"
         elif format_type == "natural_language":
             content += "Respond in natural language (Korean/한글).\n"
 
@@ -549,7 +562,7 @@ Bad (2 steps - unnecessary read step):
             params_str = json.dumps(params_hint, indent=2, ensure_ascii=False)
             self.add_custom_section(
                 "params_hint",
-                f"## Suggested Parameters\n```json\n{params_str}\n```",
+                f"## Suggested Parameters\n\n{params_str}\n",
                 order=18,
                 section_type="user"
             )
@@ -576,7 +589,8 @@ Bad (2 steps - unnecessary read step):
             f"Execute ONLY Step {step_num}",
             "You MUST generate exactly ONE tool_call",
             f"Use parameter names with action prefix (e.g., {action}_param)",
-            "Use references ([FILE:*], [RESULT:*]) when appropriate",
+            "Use references ([FILE:*], [RESULT:*]) in parameter values when appropriate",
+            "For content/prompt parameters: prefer [FILE:path] over [RESULT:*] when modifying files",
             "All required parameters must be provided",
             "Respond with valid JSON only"
         ])
@@ -618,9 +632,8 @@ Bad (2 steps - unnecessary read step):
 {error_message}
 
 **Failed Parameters:**
-```json
 {failed_params_str}
-```"""
+"""
 
         self.add_custom_section("error_context", error_section, order=16)
 
