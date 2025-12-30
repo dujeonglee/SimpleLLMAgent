@@ -38,6 +38,7 @@ class ToolResult:
     metadata: Dict = field(default_factory=dict)  # 부가 정보
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     session_id: str = ""             # 소속 세션 ID
+    short_summary: str = ""          # 결과 요약 (LLM이 참조하기 쉽도록)
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -53,13 +54,14 @@ class ToolResult:
         return "success" if self.success else "error"
 
     @classmethod
-    def success_result(cls, output: Any, metadata: Dict = None) -> "ToolResult":
+    def success_result(cls, output: Any, metadata: Dict = None, short_summary: str = "") -> "ToolResult":
         """성공 결과 생성 헬퍼"""
         return cls(
             success=True,
             output=output,
             error=None,
-            metadata=metadata or {}
+            metadata=metadata or {},
+            short_summary=short_summary
         )
 
     @classmethod

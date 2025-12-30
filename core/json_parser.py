@@ -25,14 +25,14 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
     if not json_string or not isinstance(json_string, str):
         return None
     
-    # 1. 먼저 그대로 파싱 시도
+    # 1. Incomplete code block 처리 (```로 시작했는데 끝이 없는 경우 등)
+    sanitized = sanitize_code_blocks(json_string)
+
+    # 2. 먼저 그대로 파싱 시도
     try:
-        return json.loads(json_string)
+        return json.loads(sanitized)
     except json.JSONDecodeError:
         pass
-
-    # 2. Incomplete code block 처리 (```로 시작했는데 끝이 없는 경우 등)
-    sanitized = sanitize_code_blocks(json_string)
 
     # 3. 바깥쪽 코드 블록만 제거 (내부 ```는 보존)
     cleaned = _remove_outer_code_block(sanitized)

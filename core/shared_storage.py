@@ -261,11 +261,11 @@ class SharedStorage:
             else:
                 lines = []
                 for composite_key, r in session_results:
-                    output_preview = self._truncate_output_with_length(r.output, max_output_preview)
-
+                    # Use short_summary if available, otherwise fall back to truncated output
+                    preview = r.short_summary if r.short_summary else str(r.output)[:max_output_preview]
                     lines.append(
                         f"  - [RESULT:{composite_key}]: Step {r.step} ({r.executor}.{r.action})\n"
-                        f"    Preview: {output_preview}"
+                        f"    Preview: {preview}"
                     )
                 session_sections.append("**Results:**\n" + "\n".join(lines))
 
@@ -319,6 +319,7 @@ class SharedStorage:
         return output_str
 
     def reset(self):
-        """전체 초기화 (모든 세션 삭제, all_results는 유지)"""
+        """전체 초기화"""
         self._contexts = []
-        self.logger.info("SharedStorage 초기화 완료 (모든 세션 삭제, all_results 보존)")
+        self._all_results = []
+        self.logger.info("SharedStorage 초기화 완료")

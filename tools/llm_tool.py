@@ -234,13 +234,15 @@ Be specific and provide code examples for your suggestions."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
+            summary = f"Code review completed ({len(response)} chars)"
             return ToolResult.success_result(
                 output=response,
                 metadata={
                     "action": "codereview",
                     "content_length": len(content),
                     "instruction": instruction
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Code review failed: {str(e)}")
@@ -267,13 +269,15 @@ Format your response in Markdown with diagrams where helpful."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
+            summary = f"Architecture analysis completed ({len(response)} chars)"
             return ToolResult.success_result(
                 output=response,
                 metadata={
                     "action": "architectureanalysis",
                     "content_length": len(content),
                     "instruction": instruction
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Architecture analysis failed: {str(e)}")
@@ -299,13 +303,15 @@ Format appropriately for the code's language and context."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
+            summary = f"Documentation generated ({len(response)} chars)"
             return ToolResult.success_result(
                 output=response,
                 metadata={
                     "action": "codedoc",
                     "content_length": len(content),
                     "instruction": instruction
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Documentation generation failed: {str(e)}")
@@ -333,13 +339,15 @@ Format your response in Markdown."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
+            summary = f"Static analysis completed ({len(response)} chars)"
             return ToolResult.success_result(
                 output=response,
                 metadata={
                     "action": "staticanalysis",
                     "content_length": len(content),
                     "instruction": instruction
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Static analysis failed: {str(e)}")
@@ -380,13 +388,16 @@ Provide the complete code with explanatory comments."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
+            action_type = "modified" if content else "generated"
+            summary = f"Code {action_type} ({len(response)} chars)"
             return ToolResult.success_result(
                 output=response,
                 metadata={
                     "action": "codewriter",
                     "instruction": instruction,
                     "modification": bool(content)
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Code generation failed: {str(e)}")
@@ -411,6 +422,7 @@ Question/Request: {prompt}"""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
+            summary = f"General query completed ({len(response)} chars)"
             return ToolResult.success_result(
                 output=response,
                 metadata={
@@ -418,7 +430,8 @@ Question/Request: {prompt}"""
                     "prompt_length": len(prompt),
                     "has_context": bool(content),
                     "context_length": len(content) if content else 0
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Query failed: {str(e)}")

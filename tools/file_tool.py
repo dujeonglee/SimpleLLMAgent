@@ -137,14 +137,19 @@ class FileTool(BaseTool):
         try:
             with open(resolved, "r", encoding=encoding) as f:
                 content = f.read()
-            
+
+            filename = os.path.basename(resolved)
+            lines = content.count('\n') + 1
+            summary = f"Read {filename} ({len(content)} bytes, {lines} lines)"
+
             return ToolResult.success_result(
                 output=content,
                 metadata={
                     "path": resolved,
                     "size": len(content),
                     "encoding": encoding
-                }
+                },
+                short_summary=summary
             )
         except UnicodeDecodeError as e:
             return ToolResult.error_result(f"Encoding error: {str(e)}")
@@ -178,7 +183,9 @@ class FileTool(BaseTool):
             
             size = len(content)
             action = "overwritten" if file_existed else "created"
-            
+            lines = content.count('\n') + 1
+            summary = f"{action.capitalize()} {filename} ({size} bytes, {lines} lines)"
+
             return ToolResult.success_result(
                 output=content,
                 metadata={
@@ -187,7 +194,8 @@ class FileTool(BaseTool):
                     "size": size,
                     "encoding": encoding,
                     "action": action
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Write error: {str(e)}")
@@ -211,10 +219,11 @@ class FileTool(BaseTool):
             # 새 파일 크기 확인
             new_size = os.path.getsize(resolved)
             appended_size = len(content)
-            
+
             # 명확한 성공 메시지
             result_msg = f"✅ Appended {appended_size} bytes to '{filename}' (total: {new_size} bytes)"
-            
+            summary = f"Appended to {filename} (+{appended_size} bytes, total: {new_size} bytes)"
+
             return ToolResult.success_result(
                 output=result_msg,
                 metadata={
@@ -223,7 +232,8 @@ class FileTool(BaseTool):
                     "appended_size": appended_size,
                     "total_size": new_size,
                     "encoding": encoding
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Append error: {str(e)}")
@@ -245,16 +255,18 @@ class FileTool(BaseTool):
         
         try:
             os.remove(resolved)
-            
+
             # 명확한 성공 메시지
             result_msg = f"✅ File '{filename}' deleted successfully"
-            
+            summary = f"Deleted {filename}"
+
             return ToolResult.success_result(
                 output=result_msg,
                 metadata={
                     "deleted_path": resolved,
                     "filename": filename
-                }
+                },
+                short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Delete error: {str(e)}")
@@ -274,9 +286,11 @@ class FileTool(BaseTool):
             is_file = os.path.isfile(resolved)
             file_type = "file" if is_file else "directory"
             result_msg = f"✅ '{filename}' exists ({file_type})"
+            summary = f"{filename} exists ({file_type})"
         else:
             result_msg = f"❌ '{filename}' does not exist"
-        
+            summary = f"{filename} does not exist"
+
         return ToolResult.success_result(
             output=result_msg,
             metadata={
@@ -285,5 +299,6 @@ class FileTool(BaseTool):
                 "exists": exists,
                 "is_file": os.path.isfile(resolved) if exists else None,
                 "is_dir": os.path.isdir(resolved) if exists else None
-            }
+            },
+            short_summary=summary
         )
