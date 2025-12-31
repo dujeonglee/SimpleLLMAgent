@@ -321,5 +321,5 @@ class SharedStorage:
     def reset(self):
         """전체 초기화"""
         self._contexts = []
-        self._all_results = []
+        self._all_results = {}
         self.logger.info("SharedStorage 초기화 완료")

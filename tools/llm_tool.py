@@ -213,7 +213,7 @@ Be specific and provide code examples for your suggestions."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
-            summary = f"Code review completed ({len(response)} chars)"
+            summary = f"Code review completed - {user_prompt})"
             return ToolResult.success_result(
                 output=response,
                 metadata={
@@ -244,7 +244,7 @@ Format your response in Markdown with diagrams where helpful."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
-            summary = f"Architecture analysis completed ({len(response)} chars)"
+            summary = f"Architecture analysis completed - {user_prompt})"
             return ToolResult.success_result(
                 output=response,
                 metadata={
@@ -274,7 +274,7 @@ Format appropriately for the code's language and context."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
-            summary = f"Documentation generated ({len(response)} chars)"
+            summary = f"Documentation generated - {user_prompt})"
             return ToolResult.success_result(
                 output=response,
                 metadata={
@@ -306,7 +306,7 @@ Format your response in Markdown."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
-            summary = f"Static analysis completed ({len(response)} chars)"
+            summary = f"Static analysis completed - {user_prompt})"
             return ToolResult.success_result(
                 output=response,
                 metadata={
@@ -334,8 +334,7 @@ Write new code from scratch according to the specifications.
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
-            action_type = "generated"
-            summary = f"Code {action_type} ({len(response)} chars)"
+            summary = f"Code generation completed - {user_prompt})"
             return ToolResult.success_result(
                 output=response,
                 metadata={
@@ -358,7 +357,7 @@ Provide accurate, well-reasoned responses."""
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
-            summary = f"General query completed ({len(response)} chars)"
+            summary = f"General query completed - {user_prompt})"
             return ToolResult.success_result(
                 output=response,
                 metadata={
