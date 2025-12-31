@@ -183,7 +183,7 @@ You can use these references in parameter values:
         self.system_sections.append(PromptSection("action_schema", content, order=15))
         return self
 
-    def add_execution_context(self, context: str, max_preview: int = 300) -> 'PromptBuilder':
+    def add_execution_context(self, context: str) -> 'PromptBuilder':
         """
         실행 컨텍스트 추가 (이전 결과 요약 등)
 
@@ -194,10 +194,7 @@ You can use these references in parameter values:
         Returns:
             self
         """
-        if len(context) > max_preview:
-            preview = context[:max_preview] + f"... ({len(context)} chars total)"
-        else:
-            preview = context
+        preview = context
 
         content = f"## Execution Context\n\n{preview}"
         self.user_sections.append(PromptSection("execution_context", content, order=10))

@@ -262,7 +262,7 @@ class SharedStorage:
                 lines = []
                 for composite_key, r in session_results:
                     # Use short_summary if available, otherwise fall back to truncated output
-                    preview = r.short_summary if r.short_summary else str(r.output)[:max_output_preview]
+                    preview = r.short_summary[:max_output_preview] if r.short_summary else str(r.output)[:max_output_preview]
                     lines.append(
                         f"  - [RESULT:{composite_key}]: Step {r.step} ({r.executor}.{r.action})\n"
                         f"    Preview: {preview}"
