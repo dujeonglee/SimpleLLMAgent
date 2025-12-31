@@ -794,33 +794,48 @@ class Orchestrator:
             if not isinstance(value, str):
                 return value
 
-            # [RESULT:session_id_step] 패턴 찾기 (예: [RESULT:Session0_1])
-            pattern = r'\[RESULT:([^\]]+)\]'
-            matches = re.findall(pattern, value)
+            try:
+                # [RESULT:session_id_step] 패턴 찾기 (예: [RESULT:Session0_1])
+                pattern = r'\[RESULT:([^\]]+)\]'
+                matches = re.findall(pattern, value)
 
-            for result_key in matches:
-                output = self.storage.get_output_by_key(result_key)
-                if output is not None:
-                    # 전체 문자열이 REF만 있으면 output을 직접 사용, 아니면 문자열 치환
-                    if value.strip() == f"[RESULT:{result_key}]":
-                        return output
+                for result_key in matches:
+                    output = self.storage.get_output_by_key(result_key)
+                    if output is not None:
+                        # 전체 문자열이 REF만 있으면 output을 직접 사용, 아니면 문자열 치환
+                        if value.strip() == f"[RESULT:{result_key}]":
+                            return output
+                        else:
+                            value = value.replace(f"[RESULT:{result_key}]", str(output))
                     else:
-                        value = value.replace(f"[RESULT:{result_key}]", str(output))
-                else:
-                    raise ValueError(f"[RESULT:{result_key}] - Cannot find {result_key}")
-            return value
+                        raise ValueError(f"[RESULT:{result_key}] - Cannot find {result_key}")
+                return value
+            except Exception as e:
+                self.logger.error(f"RESULT reference substitution failed: {e}")
+                raise
 
         # 모든 파라미터 값에 대해 치환 수행
         substituted = {}
-        for key, value in params.items():
-            if isinstance(value, str):
-                substituted[key] = replace_ref(value)
-            elif isinstance(value, dict):
-                substituted[key] = self._substitute_result_refs(value)
-            elif isinstance(value, list):
-                substituted[key] = [replace_ref(v) if isinstance(v, str) else v for v in value]
-            else:
-                substituted[key] = value
+        try:
+            for key, value in params.items():
+                try:
+                    if isinstance(value, str):
+                        substituted[key] = replace_ref(value)
+                    elif isinstance(value, dict):
+                        substituted[key] = self._substitute_result_refs(value)
+                    elif isinstance(value, list):
+                        substituted[key] = [
+                            replace_ref(v) if isinstance(v, str) else v
+                            for v in value
+                        ]
+                    else:
+                        substituted[key] = value
+                except Exception as e:
+                    self.logger.error(f"Failed to substitute RESULT refs for key '{key}': {e}")
+                    raise
+        except Exception as e:
+            self.logger.error(f"RESULT reference substitution failed: {e}")
+            raise
 
         return substituted
 
@@ -833,70 +848,90 @@ class Orchestrator:
 
         def read_file_content(file_path: str) -> str:
             """파일 내용을 읽어서 반환"""
-            # 상대 경로를 base_path 기준으로 해석
-            path = BASE_PATH / file_path
-            
-            if not path.exists():
-                raise FileNotFoundError(f"[FILE:{file_path}] - File not found: {path}")
-            if not path.is_file():
-                raise ValueError(f"[FILE:{file_path}] - Not a file: {path}")
-            
-            # 경로 탈출 방지 (보안)
             try:
-                path.resolve().relative_to(BASE_PATH.resolve())
-            except ValueError:
-                raise ValueError(f"[FILE:{file_path}] - Path escape not allowed: {file_path}")
-            
-            try:
-                return path.read_text(encoding='utf-8')
-            except UnicodeDecodeError:
-                raise ValueError(f"[FILE:{file_path}] - Cannot read binary file as text: {path}")
+                # 상대 경로를 base_path 기준으로 해석
+                path = BASE_PATH / file_path
+
+                if not path.exists():
+                    raise FileNotFoundError(f"[FILE:{file_path}] - File not found: {path}")
+                if not path.is_file():
+                    raise ValueError(f"[FILE:{file_path}] - Not a file: {path}")
+
+                # 경로 탈출 방지 (보안)
+                try:
+                    path.resolve().relative_to(BASE_PATH.resolve())
+                except ValueError:
+                    raise ValueError(f"[FILE:{file_path}] - Path escape not allowed: {file_path}")
+
+                try:
+                    return path.read_text(encoding='utf-8')
+                except UnicodeDecodeError as e:
+                    raise ValueError(f"[FILE:{file_path}] - Cannot read binary file as text: {path}") from e
+            except Exception as e:
+                self.logger.error(f"Failed to read file '{file_path}': {e}")
+                raise
 
         def replace_ref(value):
             if not isinstance(value, str):
                 return value
 
-            # [FILE:path] 패턴 찾기 (예: [FILE:src/main.c])
-            pattern = r'\[FILE:([^\]]+)\]'
-            matches = re.findall(pattern, value)
+            try:
+                # [FILE:path] 패턴 찾기 (예: [FILE:src/main.c])
+                pattern = r'\[FILE:([^\]]+)\]'
+                matches = re.findall(pattern, value)
 
-            for file_path in matches:
-                file_path_stripped = file_path.strip()
-                content = read_file_content(file_path_stripped)
-                
-                # 전체 문자열이 FILE REF만 있으면 content를 직접 사용
-                if value.strip() == f"[FILE:{file_path}]":
-                    return content
-                else:
-                    value = value.replace(f"[FILE:{file_path}]", content)
+                for file_path in matches:
+                    file_path_stripped = file_path.strip()
+                    content = read_file_content(file_path_stripped)
 
-            return value
+                    # 전체 문자열이 FILE REF만 있으면 content를 직접 사용
+                    if value.strip() == f"[FILE:{file_path}]":
+                        return content
+                    else:
+                        value = value.replace(f"[FILE:{file_path}]", content)
+
+                return value
+            except Exception as e:
+                self.logger.error(f"FILE reference substitution failed: {e}")
+                raise
 
         # 모든 파라미터 값에 대해 치환 수행
         substituted = {}
-        for key, value in params.items():
-            if isinstance(value, str):
-                substituted[key] = replace_ref(value)
-            elif isinstance(value, dict):
-                substituted[key] = self._substitute_file_refs(value)
-            elif isinstance(value, list):
-                substituted[key] = [
-                    replace_ref(v) if isinstance(v, str) 
-                    else self._substitute_file_refs(v) if isinstance(v, dict)
-                    else v 
-                    for v in value
-                ]
-            else:
-                substituted[key] = value
+        try:
+            for key, value in params.items():
+                try:
+                    if isinstance(value, str):
+                        substituted[key] = replace_ref(value)
+                    elif isinstance(value, dict):
+                        substituted[key] = self._substitute_file_refs(value)
+                    elif isinstance(value, list):
+                        substituted[key] = [
+                            replace_ref(v) if isinstance(v, str)
+                            else self._substitute_file_refs(v) if isinstance(v, dict)
+                            else v
+                            for v in value
+                        ]
+                    else:
+                        substituted[key] = value
+                except Exception as e:
+                    self.logger.error(f"Failed to substitute FILE refs for key '{key}': {e}")
+                    raise
+        except Exception as e:
+            self.logger.error(f"FILE reference substitution failed: {e}")
+            raise
 
         return substituted
 
 
     def _substitute_all_refs(self, params: Dict) -> Dict:
         """모든 REF ([FILE:*], [RESULT:*])를 치환"""
-        params = self._substitute_file_refs(params)
-        params = self._substitute_result_refs(params)
-        return params
+        try:
+            params = self._substitute_file_refs(params)
+            params = self._substitute_result_refs(params)
+            return params
+        except Exception as e:
+            self.logger.error(f"Reference substitution failed: {e}")
+            raise
 
     def _parse_plan(self, plan_data: List[Dict]) -> List[PlannedStep]:
         """계획 데이터를 PlannedStep 리스트로 변환"""
