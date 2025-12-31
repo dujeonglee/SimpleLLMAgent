@@ -201,14 +201,20 @@ You can use these references in parameter values:
         return self
 
     def add_response_format(self, format_type: str, template: Optional[Dict] = None,
-                           description: Optional[str] = None) -> 'PromptBuilder':
+                           description: Optional[str] = None,
+                           action_schema: Optional[Dict] = None,
+                           tool_name: Optional[str] = None,
+                           action: Optional[str] = None) -> 'PromptBuilder':
         """
         Response 형식 지정 추가
 
         Args:
             format_type: "json" 또는 "natural_language"
-            template: JSON 템플릿 (format_type="json"일 때)
+            template: JSON 템플릿 (format_type="json"일 때) - action_schema보다 우선순위 낮음
             description: 추가 설명
+            action_schema: Action schema dict (params를 기반으로 자동 템플릿 생성)
+            tool_name: Tool 이름 (action_schema 사용 시 필요)
+            action: Action 이름 (action_schema 사용 시 필요)
 
         Returns:
             self
@@ -217,7 +223,26 @@ You can use these references in parameter values:
 
         if format_type == "json":
             content += "Respond with valid JSON only. Do NOT wrap with markdown code blocks (```). Output raw JSON directly.\n\n"
-            if template:
+
+            # action_schema가 있으면 동적으로 tool_calls 템플릿 생성 (우선순위 높음)
+            if action_schema and tool_name and action:
+                arguments_template = {"action": action}
+                arguments_template.update(self._generate_json_template_from_schema(action_schema))
+
+                json_template = {
+                    "thought": "Brief reasoning about parameter values",
+                    "tool_calls": [
+                        {
+                            "name": tool_name,
+                            "arguments": arguments_template
+                        }
+                    ]
+                }
+                import json
+                content += "Format:\n"
+                content += json.dumps(json_template, indent=2, ensure_ascii=False)
+                content += "\n"
+            elif template:
                 import json
                 content += "Format:\n"
                 content += json.dumps(template, indent=2, ensure_ascii=False)
@@ -230,6 +255,50 @@ You can use these references in parameter values:
 
         self.system_sections.append(PromptSection("response_format", content, order=30))
         return self
+
+    def _generate_json_template_from_schema(self, action_schema: Dict) -> Dict:
+        """
+        Action schema로부터 JSON 응답 템플릿 자동 생성
+
+        Args:
+            action_schema: Action schema dict with 'params' field
+
+        Returns:
+            Dict: JSON 템플릿
+        """
+        template = {}
+        params = action_schema.get("params", [])
+
+        for param in params:
+            param_name = param.get("name", "")
+            param_type = param.get("type", "str")
+            required = param.get("required", False)
+            description = param.get("description", "")
+            default = param.get("default")
+
+            # 타입별 예시 값 생성
+            if param_type == "str":
+                example_value = f"<{description[:30]}...>" if description else f"<string value>"
+            elif param_type == "int":
+                example_value = 0
+            elif param_type == "float":
+                example_value = 0.0
+            elif param_type == "bool":
+                example_value = False
+            elif param_type == "list":
+                example_value = []
+            elif param_type == "dict":
+                example_value = {}
+            else:
+                example_value = f"<{param_type}>"
+
+            # required가 아니고 default가 있으면 default 사용
+            if not required and default is not None:
+                template[param_name] = default
+            else:
+                template[param_name] = example_value
+
+        return template
 
     def add_rules(self, rules: List[str]) -> 'PromptBuilder':
         """
@@ -564,21 +633,13 @@ Bad (2 steps - unnecessary read step):
                 section_type="user"
             )
 
-        # Response format
+        # Response format - action_schema를 전달하여 동적 템플릿 생성
         self.add_response_format(
             "json",
-            {
-                "thought": "Brief reasoning about parameter values",
-                "tool_calls": [
-                    {
-                        "name": tool_name,
-                        "arguments": {
-                            "action": action,
-                            "param1": "concrete value or reference"
-                        }
-                    }
-                ]
-            }
+            template=None,  # template 대신 action_schema 사용
+            action_schema=action_schema,
+            tool_name=tool_name,
+            action=action
         )
 
         # Rules
@@ -659,22 +720,14 @@ Bad (2 steps - unnecessary read step):
             order=18
         )
 
-        # Response format
+        # Response format - action_schema를 전달하여 동적 템플릿 생성
         self.add_response_format(
             "json",
-            {
-                "thought": "Analysis of whether error is fixable",
-                "tool_calls": [
-                    {
-                        "name": tool_name,
-                        "arguments": {
-                            "action": action,
-                            "param1": "corrected value"
-                        }
-                    }
-                ]
-            },
-            "Note: If unfixable, return empty array for tool_calls: []"
+            template=None,  # template 대신 action_schema 사용
+            description="Note: If unfixable, return empty array for tool_calls: []",
+            action_schema=action_schema,
+            tool_name=tool_name,
+            action=action
         )
 
         self.add_rules([
