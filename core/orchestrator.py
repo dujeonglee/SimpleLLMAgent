@@ -1037,6 +1037,7 @@ class Orchestrator:
             output_tokens = data.get("eval_count", 0)
             total_duration_ns = data.get("total_duration", 0)
             eval_duration_ns = data.get("eval_duration", 0)
+            done_reson = data.get("done_reason", "none")
 
             # Calculate metrics
             prompt_length = len(system_prompt) + len(user_prompt)  # Character count
@@ -1052,7 +1053,9 @@ class Orchestrator:
 
             # Log performance metrics
             self.logger.info("LLM Performance Metrics", {
-                "elapsed_time_sec": round(elapsed_time, 2),
+                "elapsed_time_sec": round(elapsed_time, 2),  # 전체 왕복 시간
+                "server_duration_sec": round(total_duration_ns / 1e9, 2),  # 서버 처리 시간
+                "network_overhead_sec": round(elapsed_time - (total_duration_ns / 1e9), 2),  # 네트워크 지연
                 "prompt_tokens": prompt_tokens,
                 "output_tokens": output_tokens,
                 "total_tokens": prompt_tokens + output_tokens,
@@ -1060,6 +1063,7 @@ class Orchestrator:
                 "ttft_ms": round(ttft_ms, 2),
                 "prompt_chars": prompt_length,
                 "response_chars": response_length,
+                "done_reson" : done_reson,
                 "model": self.llm_config.model
             })
 
