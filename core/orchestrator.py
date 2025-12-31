@@ -183,7 +183,7 @@ class Orchestrator:
         self.llm_config = llm_config or LLMConfig()
         self.max_steps = max_steps
         self.on_step_complete = on_step_complete
-        self.logger = DebugLogger("Orchestrator", enabled=debug_enabled)
+        self.logger = DebugLogger("Orchestrator", levels=None if debug_enabled else [])
 
         self._stopped = False
         self._current_step = 0
@@ -193,7 +193,7 @@ class Orchestrator:
         # LLMTool 연동
         self._setup_llm_tool()
         
-        self.logger.info("Orchestrator 초기화", {
+        self.logger.debug("Orchestrator 초기화", {
             "max_steps": max_steps,
             "llm_model": self.llm_config.model,
             "tools": self.tools.list_tools()
@@ -209,7 +209,7 @@ class Orchestrator:
         # LLMTool 타입 체크 (duck typing)
         if hasattr(llm_tool, 'set_llm_caller'):
             llm_tool.set_llm_caller(self._call_llm_api)
-            self.logger.info("LLMTool에 llm_caller 주입 완료")
+            self.logger.debug("LLMTool에 llm_caller 주입 완료")
 
     def _get_known_actions(self) -> Dict[str, List[str]]:
         """등록된 tool들의 action 정보를 동적으로 가져오기"""
@@ -232,7 +232,7 @@ class Orchestrator:
         
         self.llm_config.update(**kwargs)
         
-        self.logger.info("LLM 설정 변경", {
+        self.logger.debug("LLM 설정 변경", {
             "changes": {k: {"old": old_values.get(k), "new": v} 
                        for k, v in kwargs.items() if k in old_values}
         })
@@ -240,7 +240,7 @@ class Orchestrator:
     def stop(self):
         """실행 중지"""
         self._stopped = True
-        self.logger.info("실행 중지 요청됨")
+        self.logger.debug("실행 중지 요청됨")
 
     def _initialize_session(self, user_query: str, files_context: str = ""):
         """세션 초기화"""
@@ -250,7 +250,7 @@ class Orchestrator:
         self._needs_tools = True
         self._files_context = files_context
         self.storage.start_session(user_query)
-        self.logger.info(f"실행 시작: {user_query[:50]}...")
+        self.logger.debug(f"실행 시작: {user_query[:50]}...")
 
     def run_stream(self, user_query: str, files_context: str = "") -> Generator[ExecutionEvent, None, None]:
         """Streaming 실행 - Plan & Execute 패턴"""
@@ -327,7 +327,7 @@ class Orchestrator:
 
         # 재시도 루프
         for retry_count in range(1, max_retries + 1):
-            self.logger.info(f"재시도 {retry_count}/{max_retries}: {tool_call.name}.{tool_call.action}", {
+            self.logger.debug(f"재시도 {retry_count}/{max_retries}: {tool_call.name}.{tool_call.action}", {
                 "previous_error": result.error
             })
 
@@ -356,7 +356,7 @@ class Orchestrator:
 
             if result.success:
                 # 재시도 성공!
-                self.logger.info(f"재시도 성공: {retry_count}번째 시도에서 성공")
+                self.logger.debug(f"재시도 성공: {retry_count}번째 시도에서 성공")
                 result.metadata["retry_count"] = retry_count
                 result.metadata["retry_history"] = retry_history
                 result.metadata["corrected_params"] = corrected_call.params
@@ -419,14 +419,14 @@ class Orchestrator:
             parsed = self._parse_tool_call_response(raw_response)
 
             if not parsed.tool_calls:
-                self.logger.info(f"LLM 판단: 파라미터 수정으로 해결 불가능", {
+                self.logger.debug(f"LLM 판단: 파라미터 수정으로 해결 불가능", {
                     "step": planned_step.step,
                     "description": planned_step.description,
                     "thought": parsed.thought
                 })
                 return None
 
-            self.logger.info(f"LLM이 파라미터 수정 제안", {
+            self.logger.debug(f"LLM이 파라미터 수정 제안", {
                 "step": planned_step.step,
                 "description": planned_step.description,
                 "thought": parsed.thought,
@@ -455,7 +455,7 @@ class Orchestrator:
         params = tool_call.params.copy()
         params = self._substitute_all_refs(params)
 
-        self.logger.info(f"Tool 실행: {tool_call.name}.{tool_call.action}", {
+        self.logger.debug(f"Tool 실행: {tool_call.name}.{tool_call.action}", {
             "params_keys": list(params.keys())
         })
 
@@ -1088,7 +1088,7 @@ class Orchestrator:
             ttft_ms = data.get("prompt_eval_duration", 0) / 1e6  # Convert ns to ms
 
             # Log performance metrics
-            self.logger.info("LLM Performance Metrics", {
+            self.logger.debug("LLM Performance Metrics", {
                 "elapsed_time_sec": round(elapsed_time, 2),  # 전체 왕복 시간
                 "server_duration_sec": round(total_duration_ns / 1e9, 2),  # 서버 처리 시간
                 "network_overhead_sec": round(elapsed_time - (total_duration_ns / 1e9), 2),  # 네트워크 지연

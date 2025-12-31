@@ -54,12 +54,12 @@ class ConfigManager:
     def __init__(self, config_path: str = "./workspace/config", debug_enabled: bool = True):
         self.config_path = config_path
         self.llm_config_file = os.path.join(config_path, "llm_config.json")
-        self.logger = DebugLogger("ConfigManager", enabled=debug_enabled)
+        self.logger = DebugLogger("ConfigManager", levels=None if debug_enabled else [])
         
         # 디렉토리 생성
         os.makedirs(config_path, exist_ok=True)
         
-        self.logger.info("ConfigManager 초기화", {"path": config_path})
+        self.logger.debug("ConfigManager 초기화", {"path": config_path})
     
     def load_initial_llm_config(self) -> LLMConfig:
         """툴 호출 및 코드 분석에 최적화된 LLM 설정 (64GB VRAM)"""
@@ -78,7 +78,7 @@ class ConfigManager:
             max_steps=20
         )
         self.save_llm_config(config)
-        self.logger.info("초기 LLM 설정 생성 완료", {"model": config.model})
+        self.logger.debug("초기 LLM 설정 생성 완료", {"model": config.model})
         return config
     
     def load_llm_config(self) -> LLMConfig:
@@ -92,10 +92,10 @@ class ConfigManager:
                 data.pop("last_updated", None)
                 
                 config = LLMConfig(**data)
-                self.logger.info("LLM 설정 로드 완료", {"model": config.model})
+                self.logger.debug("LLM 설정 로드 완료", {"model": config.model})
                 return config
             else:
-                self.logger.info("저장된 설정 없음, 초기 설정 생성")
+                self.logger.debug("저장된 설정 없음, 초기 설정 생성")
                 return self.load_initial_llm_config()
                 
         except Exception as e:
@@ -136,7 +136,7 @@ class WorkspaceManager:
         self.uploads_dir = os.path.join(workspace_path, "uploads")
         self.files_dir = os.path.join(workspace_path, "files")
         self.config_dir = os.path.join(workspace_path, "config")
-        self.logger = DebugLogger("WorkspaceManager", enabled=debug_enabled)
+        self.logger = DebugLogger("WorkspaceManager", levels=None if debug_enabled else [])
         
         # 디렉토리 생성
         os.makedirs(self.uploads_dir, exist_ok=True)
@@ -145,7 +145,7 @@ class WorkspaceManager:
         
         # 파일 출처 추적 (메모리)
         self._file_sources: Dict[str, str] = {}  # filename -> source
-        self.logger.info("WorkspaceManager 초기화", {"path": workspace_path})
+        self.logger.debug("WorkspaceManager 초기화", {"path": workspace_path})
     
     def save_upload(self, file_path: str, original_name: str = None) -> Optional[FileInfo]:
         """
@@ -183,7 +183,7 @@ class WorkspaceManager:
                 path=original_name
             )
             
-            self.logger.info(f"파일 업로드 완료: {original_name}", {
+            self.logger.debug(f"파일 업로드 완료: {original_name}", {
                 "size": file_info.size_str
             })
             
@@ -244,7 +244,7 @@ class WorkspaceManager:
             if filename in self._file_sources:
                 del self._file_sources[filename]
             
-            self.logger.info(f"파일 삭제 완료: {filename}")
+            self.logger.debug(f"파일 삭제 완료: {filename}")
             return True
             
         except Exception as e:

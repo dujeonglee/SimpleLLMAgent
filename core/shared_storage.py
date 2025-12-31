@@ -76,14 +76,14 @@ class SharedStorage:
     def __init__(self, debug_enabled: bool = True, max_contexts: int = 5):
         from core.base_tool import ToolResult  # 순환 import 방지를 위해 여기서 import
 
-        self.logger = DebugLogger("SharedStorage", enabled=debug_enabled)
+        self.logger = DebugLogger("SharedStorage", levels=None if debug_enabled else [])
 
         # 핵심 데이터 구조
         self._contexts: List[Context] = []  # 최근 세션들의 컨텍스트 (오래된 것부터 정렬)
         self._max_contexts = max_contexts  # 유지할 최대 세션 개수
         self._all_results: Dict[str, ToolResult] = {}  # 모든 results (session_id_result_id → ToolResult)
 
-        self.logger.info("SharedStorage 초기화 완료", {
+        self.logger.debug("SharedStorage 초기화 완료", {
             "max_contexts": max_contexts
         })
     
@@ -100,7 +100,7 @@ class SharedStorage:
         new_context = Context(user_query=user_query)
         self._contexts.append(new_context)
 
-        self.logger.info(f"새 세션 시작: {new_context.session_id}", {
+        self.logger.debug(f"새 세션 시작: {new_context.session_id}", {
             "user_query": user_query,
             "total_contexts": len(self._contexts)
         })
@@ -110,7 +110,7 @@ class SharedStorage:
             removed_context = self._contexts.pop(0)  # 가장 오래된 것 제거
             self._remove_session_results(removed_context.session_id)
 
-            self.logger.info(f"오래된 세션 삭제: {removed_context.session_id}", {
+            self.logger.debug(f"오래된 세션 삭제: {removed_context.session_id}", {
                 "reason": "max_contexts 초과",
                 "remaining_contexts": len(self._contexts)
             })
@@ -169,7 +169,7 @@ class SharedStorage:
 
         # 로그 출력 (output은 truncate)
         output_preview = self._truncate_output(str(tool_result.output))
-        self.logger.info(f"결과 추가: Step {tool_result.step} - {tool_result.executor}.{tool_result.action}", {
+        self.logger.debug(f"결과 추가: Step {tool_result.step} - {tool_result.executor}.{tool_result.action}", {
             "session_id": tool_result.session_id,
             "step": tool_result.step,
             "composite_key": composite_key,
@@ -290,7 +290,7 @@ class SharedStorage:
             if self._get_session_id_from_key(composite_key) == current_session_id
         ]
 
-        self.logger.info(f"세션 완료: {current_session_id}", {
+        self.logger.debug(f"세션 완료: {current_session_id}", {
             "status": status,
             "total_steps": len(current_session_results),
             "total_contexts": len(self._contexts),
@@ -322,4 +322,4 @@ class SharedStorage:
         """전체 초기화"""
         self._contexts = []
         self._all_results = {}
-        self.logger.info("SharedStorage 초기화 완료")
+        self.logger.debug("SharedStorage 초기화 완료")

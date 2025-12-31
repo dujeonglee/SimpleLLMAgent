@@ -179,10 +179,10 @@ class BaseTool(ABC):
             debug_enabled: Enable debug logging
         """
         self.base_path = base_path
-        self.logger = DebugLogger(f"Tool:{self.name}", enabled=debug_enabled)
+        self.logger = DebugLogger(f"Tool:{self.name}", levels=None if debug_enabled else [])
         self._actions: Dict[str, ActionSchema] = self._define_actions()
 
-        self.logger.info(f"Tool 초기화 완료", {
+        self.logger.debug(f"Tool 초기화 완료", {
             "name": self.name,
             "base_path": self.base_path,
             "actions": list(self._actions.keys())
@@ -239,7 +239,7 @@ class BaseTool(ABC):
         params = params or {}
         start_time = datetime.now()
 
-        self.logger.info(f"실행 시작: {action}", {"params": params, "session_id": session_id, "step": step})
+        self.logger.debug(f"실행 시작: {action}", {"params": params, "session_id": session_id, "step": step})
 
         # 1. params 검증
         is_valid, error_msg = self.validate_params(action, params)
@@ -274,7 +274,7 @@ class BaseTool(ABC):
         # 6. 결과 로깅
         if result.success:
             output_preview = self._truncate_output(str(result.output))
-            self.logger.info(f"실행 완료: {action}", {
+            self.logger.debug(f"실행 완료: {action}", {
                 "success": True,
                 "output_preview": output_preview,
                 "execution_time": f"{elapsed:.3f}s"
@@ -436,13 +436,13 @@ class ToolRegistry:
     """
     
     def __init__(self, debug_enabled: bool = True):
-        self.logger = DebugLogger("ToolRegistry", enabled=debug_enabled)
+        self.logger = DebugLogger("ToolRegistry", levels=None if debug_enabled else [])
         self._tools: Dict[str, BaseTool] = {}
     
     def register(self, tool: BaseTool):
         """Tool 등록"""
         self._tools[tool.name] = tool
-        self.logger.info(f"Tool 등록: {tool.name}", {
+        self.logger.debug(f"Tool 등록: {tool.name}", {
             "actions": tool.get_action_names()
         })
     

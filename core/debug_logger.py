@@ -13,7 +13,7 @@ Features:
 import json
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, List, Optional
 
 
 class DebugLevel(Enum):
@@ -27,20 +27,28 @@ class DebugLevel(Enum):
 class DebugLogger:
     """콘솔 디버그 로거"""
 
-    def __init__(self, module_name: str, enabled: bool = True):
+    def __init__(self, module_name: str, levels: Optional[List[DebugLevel]] = None):
         """
         Initialize Debug Logger
 
         Args:
             module_name: 로거를 사용하는 모듈 이름
-            enabled: False면 로그 출력 안함 (프로덕션 환경)
+            levels: 출력할 로그 레벨 리스트
+                   - None: 모든 레벨 출력
+                   - []: 모든 로그 비활성화
+                   - [DebugLevel.ERROR, DebugLevel.WARN]: 특정 레벨만 출력
         """
         self.module_name = module_name
-        self.enabled = enabled
+        self.levels = levels
 
     def _log(self, level: DebugLevel, message: str, data: Any = None):
         """내부 로그 출력 메서드"""
-        if not self.enabled:
+        # levels가 빈 리스트면 모든 로그 비활성화
+        if self.levels is not None and len(self.levels) == 0:
+            return
+
+        # levels가 설정되어 있으면 해당 레벨만 출력
+        if self.levels is not None and level not in self.levels:
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
