@@ -66,10 +66,8 @@ class LLMTool(BaseTool):
                 name="codereview",
                 description="Perform comprehensive code review with detailed feedback on code quality, best practices, potential bugs, and improvement suggestions. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("codereview_content", "str", True,
-                               "Code content to review. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
-                    ActionParam("codereview_instruction", "str", False,
-                               "Specific review instructions or focus areas. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Focus on error handling in [FILE:utils.c]')"),
+                    ActionParam("codereview_instruction", "str", True,
+                               "Code review instructions or focus areas. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Focus on error handling in [FILE:utils.c]')"),
                 ],
                 output_type="str",
                 output_description="Detailed code review report in Markdown format with specific recommendations"
@@ -78,10 +76,8 @@ class LLMTool(BaseTool):
                 name="architectureanalysis",
                 description="Analyze software architecture, design patterns, system structure, component relationships, and architectural trade-offs. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("architectureanalysis_content", "str", True,
-                               "Code or architectural documentation to analyze. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
-                    ActionParam("architectureanalysis_instruction", "str", False,
-                               "Specific analysis instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Evaluate scalability of [FILE:server.js]')"),
+                    ActionParam("architectureanalysis_instruction", "str", True,
+                               "Architecture analysis instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Evaluate scalability of [FILE:server.js]')"),
                 ],
                 output_type="str",
                 output_description="Architecture analysis report with patterns identified and recommendations in Markdown format"
@@ -90,10 +86,8 @@ class LLMTool(BaseTool):
                 name="codedoc",
                 description="Generate comprehensive documentation for code including docstrings, comments, API documentation, and usage examples. Returns documentation as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("codedoc_content", "str", True,
-                               "Code to document. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
-                    ActionParam("codedoc_instruction", "str", False,
-                               "Documentation instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Generate API docs for [FILE:api.py]')"),
+                    ActionParam("codedoc_instruction", "str", True,
+                               "Code documentation instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Generate API docs for [FILE:api.py]')"),
                 ],
                 output_type="str",
                 output_description="Generated documentation in appropriate format (Markdown, docstrings, or comments)"
@@ -102,10 +96,8 @@ class LLMTool(BaseTool):
                 name="staticanalysis",
                 description="Perform static code analysis to detect bugs, security vulnerabilities, code smells, type errors, and potential runtime issues without executing code. Returns analysis as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("staticanalysis_content", "str", True,
-                               "Code to analyze statically. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format."),
-                    ActionParam("staticanalysis_instruction", "str", False,
-                               "Analysis focus instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Check [FILE:auth.c] for security issues')"),
+                    ActionParam("staticanalysis_instruction", "str", True,
+                               "Static analysis instructions. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Check [FILE:auth.c] for security issues')"),
                 ],
                 output_type="str",
                 output_description="Static analysis report with categorized issues, severity levels, and fix suggestions in Markdown format"
@@ -114,8 +106,6 @@ class LLMTool(BaseTool):
                 name="codewriter",
                 description="Generate new code from scratch or modify existing code based on specifications, requirements, or improvement guidelines. Returns code as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("codewriter_content", "str", False,
-                               "Existing code to modify or extend (optional for new code generation). Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format.", None),
                     ActionParam("codewriter_instruction", "str", True,
                                "Code writing instructions and specifications. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Add error handling to [FILE:app.js]', 'Refactor [FILE:utils.py] based on [RESULT:Session0_1]')"),
                 ],
@@ -126,8 +116,6 @@ class LLMTool(BaseTool):
                 name="general",
                 description="Handle general queries, questions, and tasks that don't fit into specialized categories. Free-form interaction with LLM for any other purpose. Returns response as text output (accessible via [RESULT:SessionX_Y]) - does NOT save to file. Use file_tool.write with [RESULT:SessionX_Y] to save if needed.",
                 params=[
-                    ActionParam("general_content", "str", False,
-                               "Content or context for the query (optional). Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. When referencing files in text, always use [FILE:path] format.", None),
                     ActionParam("general_prompt", "str", True,
                                "Your question, request, or instruction for the LLM. Can be: string, [FILE:path], [RESULT:SessionX_Y], or mix of these. Use [FILE:path] for any file references (e.g., 'Modify [FILE:sample.c] based on [RESULT:Session0_1]')"),
                 ],
@@ -144,32 +132,26 @@ class LLMTool(BaseTool):
 
         if action == "codereview":
             return self._codereview(
-                get_param("content"),
                 get_param("instruction")
             )
         elif action == "architectureanalysis":
             return self._architectureanalysis(
-                get_param("content"),
                 get_param("instruction")
             )
         elif action == "codedoc":
             return self._codedoc(
-                get_param("content"),
                 get_param("instruction")
             )
         elif action == "staticanalysis":
             return self._staticanalysis(
-                get_param("content"),
                 get_param("instruction")
             )
         elif action == "codewriter":
             return self._codewriter(
-                get_param("content"),
                 get_param("instruction")
             )
         elif action == "general":
             return self._general(
-                get_param("content"),
                 get_param("prompt")
             )
         else:
@@ -212,7 +194,7 @@ This is a test mock response. Actual analysis results will be provided when conn
     # Action Implementations
     # =========================================================================
 
-    def _codereview(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
+    def _codereview(self, instruction: Optional[str]) -> ToolResult:
         """Perform comprehensive code review"""
 
         system_prompt = """You are an expert code reviewer with years of experience in software engineering.
@@ -227,10 +209,7 @@ Provide a comprehensive code review covering:
 Format your response in Markdown with clear sections.
 Be specific and provide code examples for your suggestions."""
 
-        if instruction:
-            system_prompt += f"\n\nSpecific focus areas: {instruction}"
-
-        user_prompt = f"Please review the following code:\n\n```\n{content}\n```"
+        user_prompt = instruction
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
@@ -239,7 +218,6 @@ Be specific and provide code examples for your suggestions."""
                 output=response,
                 metadata={
                     "action": "codereview",
-                    "content_length": len(content),
                     "instruction": instruction
                 },
                 short_summary=summary
@@ -247,7 +225,7 @@ Be specific and provide code examples for your suggestions."""
         except Exception as e:
             return ToolResult.error_result(f"Code review failed: {str(e)}")
 
-    def _architectureanalysis(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
+    def _architectureanalysis(self, instruction: Optional[str]) -> ToolResult:
         """Analyze software architecture"""
 
         system_prompt = """You are a software architect specializing in system design and architecture analysis.
@@ -262,10 +240,7 @@ Analyze the architecture and provide insights on:
 
 Format your response in Markdown with diagrams where helpful."""
 
-        if instruction:
-            system_prompt += f"\n\nSpecific analysis focus: {instruction}"
-
-        user_prompt = f"Please analyze the architecture of:\n\n```\n{content}\n```"
+        user_prompt = instruction
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
@@ -274,7 +249,6 @@ Format your response in Markdown with diagrams where helpful."""
                 output=response,
                 metadata={
                     "action": "architectureanalysis",
-                    "content_length": len(content),
                     "instruction": instruction
                 },
                 short_summary=summary
@@ -282,7 +256,7 @@ Format your response in Markdown with diagrams where helpful."""
         except Exception as e:
             return ToolResult.error_result(f"Architecture analysis failed: {str(e)}")
 
-    def _codedoc(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
+    def _codedoc(self, instruction: Optional[str]) -> ToolResult:
         """Generate code documentation"""
 
         system_prompt = """You are a technical documentation specialist.
@@ -296,10 +270,7 @@ Generate comprehensive documentation including:
 Follow language-specific documentation conventions (docstrings, JSDoc, etc.).
 Format appropriately for the code's language and context."""
 
-        if instruction:
-            system_prompt += f"\n\nDocumentation requirements: {instruction}"
-
-        user_prompt = f"Please document the following code:\n\n```\n{content}\n```"
+        user_prompt = instruction
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
@@ -308,7 +279,6 @@ Format appropriately for the code's language and context."""
                 output=response,
                 metadata={
                     "action": "codedoc",
-                    "content_length": len(content),
                     "instruction": instruction
                 },
                 short_summary=summary
@@ -316,7 +286,7 @@ Format appropriately for the code's language and context."""
         except Exception as e:
             return ToolResult.error_result(f"Documentation generation failed: {str(e)}")
 
-    def _staticanalysis(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
+    def _staticanalysis(self, instruction: Optional[str]) -> ToolResult:
         """Perform static code analysis"""
 
         system_prompt = """You are a static code analyzer specializing in bug detection and code quality.
@@ -332,10 +302,7 @@ Categorize issues by severity (Critical, High, Medium, Low).
 Provide specific line references and fix suggestions.
 Format your response in Markdown."""
 
-        if instruction:
-            system_prompt += f"\n\nFocus areas: {instruction}"
-
-        user_prompt = f"Please perform static analysis on:\n\n```\n{content}\n```"
+        user_prompt = instruction
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
@@ -344,7 +311,6 @@ Format your response in Markdown."""
                 output=response,
                 metadata={
                     "action": "staticanalysis",
-                    "content_length": len(content),
                     "instruction": instruction
                 },
                 short_summary=summary
@@ -352,29 +318,11 @@ Format your response in Markdown."""
         except Exception as e:
             return ToolResult.error_result(f"Static analysis failed: {str(e)}")
 
-    def _codewriter(self, content: Optional[str], instruction: Optional[str]) -> ToolResult:
+    def _codewriter(self, instruction: Optional[str]) -> ToolResult:
         """Generate or modify code"""
 
         # For codewriter, content is optional (new code generation)
-        if content:
-            system_prompt = """You are an expert software engineer.
-Modify or extend the provided code according to the specifications.
-- Maintain existing code style and conventions
-- Add clear comments for new functionality
-- Ensure backward compatibility unless instructed otherwise
-- Follow best practices and design patterns
-- Write clean, readable, maintainable code"""
-
-            user_prompt = f"""Existing code:
-```
-{content}
-```
-
-Instructions: {instruction}
-
-Provide the modified code with explanatory comments."""
-        else:
-            system_prompt = """You are an expert software engineer.
+        system_prompt = """You are an expert software engineer.
 Write new code from scratch according to the specifications.
 - Follow best practices and conventions
 - Add clear, helpful comments
@@ -382,43 +330,31 @@ Write new code from scratch according to the specifications.
 - Write clean, readable, maintainable code
 - Include usage examples if helpful"""
 
-            user_prompt = f"""Instructions: {instruction}
-
-Provide the complete code with explanatory comments."""
+        user_prompt = instruction
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
-            action_type = "modified" if content else "generated"
+            action_type = "generated"
             summary = f"Code {action_type} ({len(response)} chars)"
             return ToolResult.success_result(
                 output=response,
                 metadata={
                     "action": "codewriter",
-                    "instruction": instruction,
-                    "modification": bool(content)
+                    "instruction": instruction
                 },
                 short_summary=summary
             )
         except Exception as e:
             return ToolResult.error_result(f"Code generation failed: {str(e)}")
 
-    def _general(self, content: Optional[str], prompt: Optional[str]) -> ToolResult:
+    def _general(self, prompt: Optional[str]) -> ToolResult:
         """Handle general queries"""
 
         system_prompt = """You are a helpful AI assistant.
 Answer questions clearly and concisely.
 Provide accurate, well-reasoned responses."""
 
-        # Build user prompt with optional content context
-        if content:
-            user_prompt = f"""Context:
-```
-{content}
-```
-
-Question/Request: {prompt}"""
-        else:
-            user_prompt = prompt
+        user_prompt = prompt
 
         try:
             response = self._call_llm(system_prompt, user_prompt)
@@ -427,9 +363,7 @@ Question/Request: {prompt}"""
                 output=response,
                 metadata={
                     "action": "general",
-                    "prompt_length": len(prompt),
-                    "has_context": bool(content),
-                    "context_length": len(content) if content else 0
+                    "prompt_length": len(prompt)
                 },
                 short_summary=summary
             )

@@ -173,7 +173,7 @@ class ToolResultEvent(ExecutionEvent):
         status_emoji = "✅" if self.success else "❌"
         summary = f"Output: {status_emoji} {'완료' if self.success else '실패'}"
         output = f"<details>\n<summary><b>{summary}</b></summary>\n\n"
-        output += f"{html.escape(self.result)}\n</details>\n\n"
+        output += f"{self.result}\n</details>\n\n"
         print(self.result)
 
         return output

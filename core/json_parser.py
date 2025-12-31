@@ -85,7 +85,7 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
         return json.loads(json_string)
     except json.JSONDecodeError as e:
         # 파싱 실패 시 디버그 파일 저장
-        _save_failed_json(json_string, str(e))
+        err_try1 = str(e)
         pass
     
     try:
@@ -96,7 +96,11 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
         return json.loads(code_block[0].get("content"))
     except json.JSONDecodeError as e:
         # 파싱 실패 시 디버그 파일 저장
-        _save_failed_json(code_block[0].get("content"), str(e))
+        err_try2 = str(e)
         pass
 
+    if not err_try1 == "":
+        _save_failed_json(json_string, err_try1)
+    if not err_try2 == "":
+        _save_failed_json(code_block[0].get("content"), err_try2)
     return None
