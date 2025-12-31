@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, Generator, List, Optional
 from core.shared_storage import SharedStorage
 from core.debug_logger import DebugLogger
 from core.base_tool import ToolRegistry, ToolResult, ActionSchema
-from core.json_parser import parse_json_strict
+from core.json_parser import parse_json_robust
 from core.prompt_builder import PromptBuilder
 from core.execution_events import (
     ExecutionEvent,
@@ -536,7 +536,7 @@ class Orchestrator:
         raw_response = self._call_llm_api(system_prompt, user_prompt)
 
         try:
-            parsed = parse_json_strict(raw_response)
+            parsed = parse_json_robust(raw_response)
             needs_tools = parsed.get("needs_tools", True)  # 기본값: True (안전)
             self.logger.debug("Classification 결과", {
                 "needs_tools": needs_tools,
@@ -587,7 +587,7 @@ class Orchestrator:
         raw_response = self._call_llm_api(system_prompt, user_prompt)
 
         try:
-            parsed = parse_json_strict(raw_response)
+            parsed = parse_json_robust(raw_response)
             self.logger.debug("Plan 생성 완료", {
                 "has_plan": "plan" in parsed,
                 "has_direct_answer": "direct_answer" in parsed,
@@ -806,7 +806,8 @@ class Orchestrator:
                         return output
                     else:
                         value = value.replace(f"[RESULT:{result_key}]", str(output))
-
+                else:
+                    raise ValueError(f"[RESULT:{result_key}] - Cannot find {result_key}")
             return value
 
         # 모든 파라미터 값에 대해 치환 수행
@@ -1080,7 +1081,7 @@ class Orchestrator:
     def _parse_tool_call_response(self, raw_response: str) -> LLMResponse:
         """LLM 응답에서 tool_calls를 추출하여 LLMResponse 객체로 변환"""
         try:
-            data = parse_json_strict(raw_response)
+            data = parse_json_robust(raw_response)
 
             tool_calls = None
             if data.get("tool_calls"):

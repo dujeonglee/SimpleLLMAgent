@@ -1,10 +1,23 @@
 import json
 import re
-import ast
 import os
-from typing import Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 
+def extract_code_blocks(text: str) -> List[Dict]:
+    """코드 블록 상세 정보 추출"""
+    pattern = r'```(\w*)\n(.*?)```'
+    matches = re.finditer(pattern, text, re.DOTALL)
+    
+    return [
+        {
+            "language": match.group(1) or None,
+            "content": match.group(2).strip(),
+            "start": match.start(),
+            "end": match.end()
+        }
+        for match in matches
+    ]
 
 def _save_failed_json(json_string: str, error_msg: str = ""):
     """
@@ -65,7 +78,6 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
     Returns:
         파싱된 Python 객체 (dict, list 등) 또는 실패시 None
     """
-    print(json_string)
     if not json_string or not isinstance(json_string, str):
         return None
 
@@ -74,6 +86,17 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
     except json.JSONDecodeError as e:
         # 파싱 실패 시 디버그 파일 저장
         _save_failed_json(json_string, str(e))
-
+        pass
+    
+    try:
+        code_block = extract_code_blocks(json_string)
+        if len(code_block) > 1:
+            _save_failed_json(json_string, f'More than one json objects in response : {len(code_block)}')
+            return None
+        return json.loads(code_block[0].get("content"))
+    except json.JSONDecodeError as e:
+        # 파싱 실패 시 디버그 파일 저장
+        _save_failed_json(code_block[0].get("content"), str(e))
+        pass
 
     return None

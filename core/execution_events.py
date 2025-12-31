@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional
-from core.json_parser import (parse_json_strict, sanitize_code_blocks)
+from core.json_parser import (parse_json_robust)
 
 # =============================================================================
 # Base Class
@@ -49,7 +49,7 @@ class PlanPromptEvent(ExecutionEvent):
         output += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
         output += f"```\n{self.user_prompt}\n```\n</details>\n\n"
         output += "<details>\n<summary><b>🤖 LLM Response</b></summary>\n\n"
-        output += f"```\n{json.dumps(parse_json_strict(self.raw_response), indent=2)}\n```\n</details>\n\n"
+        output += f"```\n{json.dumps(parse_json_robust(self.raw_response), indent=2)}\n```\n</details>\n\n"
 
         return output
 
@@ -117,7 +117,7 @@ class StepPromptEvent(ExecutionEvent):
         output += "<details>\n<summary><b>User Prompt</b></summary>\n\n"
         output += f"```\n{self.user_prompt}\n```\n</details>\n\n"
         output += "<details>\n<summary><b>🤖 LLM Response</b></summary>\n\n"
-        output += f"```\n{json.dumps(parse_json_strict(self.raw_response), indent=2)}\n```\n</details>\n\n"
+        output += f"```\n{json.dumps(parse_json_robust(self.raw_response), indent=2)}\n```\n</details>\n\n"
         return output
 
     def to_dict(self) -> Dict:
@@ -173,7 +173,8 @@ class ToolResultEvent(ExecutionEvent):
         status_emoji = "✅" if self.success else "❌"
         summary = f"Output: {status_emoji} {'완료' if self.success else '실패'}"
         output = f"<details>\n<summary><b>{summary}</b></summary>\n\n"
-        output += f"{html.escape(self.result)}</details>\n\n"
+        output += f"{html.escape(self.result)}\n</details>\n\n"
+        print(self.result)
 
         return output
 
