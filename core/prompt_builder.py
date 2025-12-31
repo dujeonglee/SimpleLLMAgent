@@ -261,39 +261,43 @@ You can use these references in parameter values:
         Action schema로부터 JSON 응답 템플릿 자동 생성
 
         Args:
-            action_schema: Action schema dict with 'params' field
+            action_schema: Action schema dict (ActionSchema.to_dict() 결과)
+                          형식: {"parameters": {"properties": {...}, "required": [...]}}
 
         Returns:
             Dict: JSON 템플릿
         """
         template = {}
-        params = action_schema.get("params", [])
 
-        for param in params:
-            param_name = param.get("name", "")
-            param_type = param.get("type", "str")
-            required = param.get("required", False)
-            description = param.get("description", "")
-            default = param.get("default")
+        # ActionSchema.to_dict() 형식: parameters.properties에서 파라미터 정보 추출
+        parameters = action_schema.get("parameters", {})
+        properties = parameters.get("properties", {})
+        required_list = parameters.get("required", [])
 
-            # 타입별 예시 값 생성
-            if param_type == "str":
+        for param_name, param_info in properties.items():
+            param_type = param_info.get("type", "string")  # JSON Schema type
+            description = param_info.get("description", "")
+            default = param_info.get("default")
+            is_required = param_name in required_list
+
+            # JSON Schema 타입별 예시 값 생성
+            if param_type == "string":
                 example_value = f"<{description[:30]}...>" if description else f"<string value>"
-            elif param_type == "int":
+            elif param_type == "integer":
                 example_value = 0
-            elif param_type == "float":
+            elif param_type == "number":
                 example_value = 0.0
-            elif param_type == "bool":
+            elif param_type == "boolean":
                 example_value = False
-            elif param_type == "list":
+            elif param_type == "array":
                 example_value = []
-            elif param_type == "dict":
+            elif param_type == "object":
                 example_value = {}
             else:
                 example_value = f"<{param_type}>"
 
             # required가 아니고 default가 있으면 default 사용
-            if not required and default is not None:
+            if not is_required and default is not None:
                 template[param_name] = default
             else:
                 template[param_name] = example_value
