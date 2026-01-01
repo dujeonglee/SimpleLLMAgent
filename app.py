@@ -363,7 +363,33 @@ def save_settings(url, model_display, temperature, max_tokens, top_p, top_k, rep
         timeout=timeout
     )
 
-    return gr.update(visible=False)
+
+def reset_settings():
+    """Reset settings to initial default values"""
+    state = get_app_state()
+
+    # Load initial config (resets to default)
+    initial_config = state.config_manager.load_initial_llm_config()
+
+    # Update state with initial config
+    state.llm_config = initial_config
+    state.orchestrator.llm_config = initial_config
+
+    # Return updated values for all sliders and inputs
+    return (
+        gr.update(value=initial_config.base_url),  # url_input
+        gr.update(value=initial_config.model),  # model_dropdown
+        gr.update(value=initial_config.temperature),  # temperature_slider
+        gr.update(value=initial_config.max_tokens),  # max_tokens_slider
+        gr.update(value=initial_config.top_p),  # top_p_slider
+        gr.update(value=initial_config.top_k),  # top_k_slider
+        gr.update(value=initial_config.repeat_penalty),  # repeat_penalty_slider
+        gr.update(value=initial_config.frequency_penalty),  # frequency_penalty_slider
+        gr.update(value=initial_config.presence_penalty),  # presence_penalty_slider
+        gr.update(value=initial_config.num_ctx),  # num_ctx_slider
+        gr.update(value=initial_config.max_steps),  # max_steps_slider
+        gr.update(value=initial_config.timeout)  # timeout_slider
+    )
 
 
 # =============================================================================
@@ -510,6 +536,7 @@ def create_ui() -> gr.Blocks:
 
             with gr.Row():
                 save_btn = gr.Button("💾 Save", variant="primary")
+                reset_btn = gr.Button("🔄 Reset to Default", variant="secondary")
                 cancel_btn = gr.Button("Cancel")
         
         # Chat Area
@@ -596,6 +623,14 @@ def create_ui() -> gr.Blocks:
         )
 
         cancel_btn.click(fn=close_settings_modal, outputs=[settings_modal])
+
+        reset_btn.click(
+            fn=reset_settings,
+            outputs=[url_input, model_dropdown, temperature_slider, max_tokens_slider,
+                    top_p_slider, top_k_slider, repeat_penalty_slider,
+                    frequency_penalty_slider, presence_penalty_slider,
+                    num_ctx_slider, max_steps_slider, timeout_slider]
+        )
 
         url_input.change(fn=on_url_change, inputs=[url_input], outputs=[url_status, model_dropdown])
 
