@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, Generator, List, Optional
 from core.shared_storage import SharedStorage
 from core.debug_logger import DebugLogger
 from core.base_tool import ToolRegistry, ToolResult, ActionSchema
-from core.json_parser import parse_json_robust
+from core.json_parser import (parse_json_robust, remove_think_tags)
 from core.prompt_builder import PromptBuilder
 from core.execution_events import (
     ExecutionEvent,
@@ -1104,7 +1104,10 @@ class Orchestrator:
             })
 
             # Chat API 응답 형식: message.content
-            return data.get("message", {}).get("content", "")
+            content = data.get("message", {}).get("content", "")
+
+            # <think>, <thinking> 태그 제거
+            return remove_think_tags(content)
 
         except ImportError:
             self.logger.warn("requests 패키지 없음 - Mock 응답 반환")

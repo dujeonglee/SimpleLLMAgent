@@ -19,6 +19,24 @@ def extract_code_blocks(text: str) -> List[Dict]:
         for match in matches
     ]
 
+def remove_think_tags(text: str) -> str:
+    """
+    <think></think> 태그로 감싸진 부분을 제거
+
+    Args:
+        text: 원본 텍스트
+
+    Returns:
+        <think> 태그 제거된 텍스트
+    """
+    # <think>...</think> 패턴 제거 (멀티라인, 대소문자 무시)
+    think_pattern = r'<think>.*?</think>'
+    think_cleaned = re.sub(think_pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+    thinking_pattern = r'<thinking>.*?</thinking>'
+    thinking_cleaned = re.sub(thinking_pattern, '', think_cleaned.strip(), flags=re.DOTALL | re.IGNORECASE)
+    return thinking_cleaned.strip()
+
+
 def _save_failed_json(json_string: str, error_msg: str = ""):
     """
     파싱 실패한 JSON 문자열을 디버깅용 파일에 저장
@@ -90,6 +108,9 @@ def parse_json_robust(json_string: str) -> dict | list | Any | None:
     
     try:
         code_block = extract_code_blocks(json_string)
+        if len(code_block) < 1:
+            _save_failed_json(json_string, f'No json objects in response : {len(code_block)}')
+            return None
         if len(code_block) > 1:
             _save_failed_json(json_string, f'More than one json objects in response : {len(code_block)}')
             return None

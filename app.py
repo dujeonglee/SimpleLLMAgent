@@ -363,6 +363,9 @@ def save_settings(url, model_display, temperature, max_tokens, top_p, top_k, rep
         timeout=timeout
     )
 
+    # Close the settings modal after saving
+    return gr.update(visible=False)
+
 
 def reset_settings():
     """Reset settings to initial default values"""
