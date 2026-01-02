@@ -236,12 +236,9 @@ def chat_stream(message: str, history: List[Dict]) -> Generator[tuple, None, Non
 
     except GeneratorExit:
         # Gradio가 generator를 중단할 때
+        # GeneratorExit에서는 yield를 할 수 없으므로 그냥 정리만 수행
         state.orchestrator._stopped = True
-        accumulated_output.append("\n⏹️ **중지됨**")
-        response = "\n".join(accumulated_output)
-        if len(history) > 0 and history[-1]["role"] == "assistant":
-            history[-1]["content"] = response
-        yield history, gr.update(interactive=True), gr.update(interactive=False), gr.update()
+        # 여기서 yield하지 않음 - GeneratorExit는 더 이상 값을 생성할 수 없음을 의미
 
     except Exception as e:
         accumulated_output.append(f"\n❌ **예외 발생**\n\n{str(e)}")
@@ -655,12 +652,16 @@ def create_ui() -> gr.Blocks:
             Subsequent yields: stream from chat_stream
             Returns: (chatbot, send_btn, stop_btn, msg_input, files_state)
             """
-            # First yield to clear input immediately
-            yield history, gr.update(interactive=False), gr.update(interactive=True), "", gr.update()
+            try:
+                # First yield to clear input immediately
+                yield history, gr.update(interactive=False), gr.update(interactive=True), "", gr.update()
 
-            # Then stream the actual chat
-            for chatbot_update, send_update, stop_update, file_list_update in chat_stream(message, history):
-                yield chatbot_update, send_update, stop_update, "", file_list_update
+                # Then stream the actual chat
+                for chatbot_update, send_update, stop_update, file_list_update in chat_stream(message, history):
+                    yield chatbot_update, send_update, stop_update, "", file_list_update
+            except GeneratorExit:
+                # Generator was closed/cancelled by user - this is normal
+                pass
 
         def on_chat_complete():
             return gr.update(interactive=True), gr.update(interactive=False)
